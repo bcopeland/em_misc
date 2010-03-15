@@ -430,6 +430,17 @@ struct tree_node *tree_add_value(struct tree_node *root, int data)
     return (root) ? root : result;
 }
 
+void free_tree(struct tree_node *root)
+{
+    if (!root)
+        return;
+
+    free_tree(root->left);
+    free_tree(root->right);
+
+    free(root);
+}
+
 void timespec_sub(struct timespec *a, struct timespec *b, struct timespec *res)
 {
     res->tv_sec = a->tv_sec - b->tv_sec;
@@ -441,9 +452,7 @@ void timespec_sub(struct timespec *a, struct timespec *b, struct timespec *res)
     }
 }
 
-#define NKEYS (1 << 16)
-//#define NKEYS (1 << 4)
-//#define NTRIALS (100000000)
+#define MAX_KEYS (1 << 22)
 #define NTRIALS (100000000)
 
 void *empty_cache()
@@ -465,13 +474,14 @@ u64 runprof(struct tree_node *tree, int *values, int nkeys, int ntrials)
     struct timespec end_time;
     struct timespec diff_time;
 
-    srandom(100);
+    fprintf(stderr, ".\n");
+
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     for (i=0; i < ntrials; i++)
     {
         struct tree_node *t;
 
-        int which = i % NKEYS; // random() % NKEYS;
+        int which = i % nkeys;
         t = tree_find(tree, values[which]);
         assert(t->val == values[which]);
     }
@@ -500,42 +510,59 @@ int main(int argc, char *argv[])
     struct tree_node *encode_buf_dfs;
     int n_strs = 0, i;
     int count = 0;
-    int *values = malloc(NKEYS * sizeof(int));
+    int *values;
     u64 time;
+    int nkeys;
 
     struct tree_node *tree = NULL;
 
-    srandom(1);
-    for (i=0; i < NKEYS; i++)
+    srandom(10);
+    for (nkeys=1; nkeys <= MAX_KEYS; nkeys <<= 1)
     {
-        values[i] = random();
-        tree = tree_add_value(tree, values[i]);
-        count++;
+        values = malloc(nkeys * sizeof(int));
+
+        for (i=0; i < nkeys; i++)
+        {
+            values[i] = random();
+            tree = tree_add_value(tree, values[i]);
+        }
+
+        fprintf(stderr,
+            "%d keys, unbalanced height : %d\n", nkeys, tree->height);
+        tree = balance_tree(tree);
+        fprintf(stderr, "balanced height : %d\n", tree->height);
+
+        encode_buf = malloc(nkeys * sizeof(struct tree_node));
+        encode_buf_bfs = malloc(nkeys * sizeof(struct tree_node));
+        encode_buf_dfs = malloc(nkeys * sizeof(struct tree_node));
+
+        encode_tree(tree, 0, tree->height, encode_buf);
+        encode_tree_bfs(tree, 0, tree->height, encode_buf_bfs);
+        encode_tree_dfs(tree, 0, tree->height, encode_buf_dfs);
+
+        free(empty_cache());
+
+        permute_array(values, nkeys);
+
+        u64 base_time = runprof(tree, values, nkeys, NTRIALS);
+        u64 bfs_time = runprof(&encode_buf_bfs[0], values, nkeys, NTRIALS);
+        u64 veb_time = runprof(&encode_buf[0], values, nkeys, NTRIALS);
+        u64 dfs_time = runprof(&encode_buf_dfs[0], values, nkeys, NTRIALS);
+
+        printf("%d %g %g %g %g\n",
+                nkeys,
+                base_time / 1000000.,
+                bfs_time / 1000000.,
+                dfs_time / 1000000.,
+                veb_time / 1000000.);
+
+        fflush(stdout);
+
+        free(values);
+        free(encode_buf);
+        free(encode_buf_bfs);
+        free(encode_buf_dfs);
+        free_tree(tree);
+        tree = NULL;
     }
-    printf("%d keys, unbalanced height : %d\n", count, tree->height);
-    tree = balance_tree(tree);
-    printf("balanced height : %d\n", tree->height);
-
-    encode_buf = malloc(count * sizeof(struct tree_node));
-    encode_buf_bfs = malloc(count * sizeof(struct tree_node));
-    encode_buf_dfs = malloc(count * sizeof(struct tree_node));
-
-    encode_tree(tree, 0, tree->height, encode_buf);
-    encode_tree_bfs(tree, 0, tree->height, encode_buf_bfs);
-    encode_tree_dfs(tree, 0, tree->height, encode_buf_dfs);
-
-    free(empty_cache());
-
-    permute_array(values, NKEYS);
-
-    u64 base_time = runprof(tree, values, NKEYS, NTRIALS);
-    u64 bfs_time = runprof(&encode_buf_bfs[0], values, NKEYS, NTRIALS);
-    u64 dfs_time = runprof(&encode_buf_dfs[0], values, NKEYS, NTRIALS);
-    u64 veb_time = runprof(&encode_buf[0], values, NKEYS, NTRIALS);
-
-    printf("%g %g %g %g\n",
-        base_time / 1000000.,
-        bfs_time / 1000000.,
-        dfs_time / 1000000.,
-        veb_time / 1000000.);
 }
