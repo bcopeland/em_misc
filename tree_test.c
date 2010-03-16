@@ -452,7 +452,7 @@ void timespec_sub(struct timespec *a, struct timespec *b, struct timespec *res)
     }
 }
 
-#define MAX_KEYS (1 << 22)
+#define MAX_KEYS (1 << 30)
 #define NTRIALS (100000000)
 
 void *empty_cache()
@@ -506,8 +506,6 @@ int main(int argc, char *argv[])
 {
     FILE *fp;
     struct tree_node *encode_buf;
-    struct tree_node *encode_buf_bfs;
-    struct tree_node *encode_buf_dfs;
     int n_strs = 0, i;
     int count = 0;
     int *values;
@@ -517,7 +515,7 @@ int main(int argc, char *argv[])
     struct tree_node *tree = NULL;
 
     srandom(10);
-    for (nkeys=1; nkeys <= MAX_KEYS; nkeys <<= 1)
+    for (nkeys=(1<<18); nkeys <= MAX_KEYS; nkeys <<= 1)
     {
         values = malloc(nkeys * sizeof(int));
 
@@ -533,21 +531,21 @@ int main(int argc, char *argv[])
         fprintf(stderr, "balanced height : %d\n", tree->height);
 
         encode_buf = malloc(nkeys * sizeof(struct tree_node));
-        encode_buf_bfs = malloc(nkeys * sizeof(struct tree_node));
-        encode_buf_dfs = malloc(nkeys * sizeof(struct tree_node));
-
-        encode_tree(tree, 0, tree->height, encode_buf);
-        encode_tree_bfs(tree, 0, tree->height, encode_buf_bfs);
-        encode_tree_dfs(tree, 0, tree->height, encode_buf_dfs);
 
         free(empty_cache());
 
         permute_array(values, nkeys);
 
         u64 base_time = runprof(tree, values, nkeys, NTRIALS);
-        u64 bfs_time = runprof(&encode_buf_bfs[0], values, nkeys, NTRIALS);
+
+        encode_tree_bfs(tree, 0, tree->height, encode_buf);
+        u64 bfs_time = runprof(&encode_buf[0], values, nkeys, NTRIALS);
+
+        encode_tree_dfs(tree, 0, tree->height, encode_buf);
+        u64 dfs_time = runprof(&encode_buf[0], values, nkeys, NTRIALS);
+
+        encode_tree(tree, 0, tree->height, encode_buf);
         u64 veb_time = runprof(&encode_buf[0], values, nkeys, NTRIALS);
-        u64 dfs_time = runprof(&encode_buf_dfs[0], values, nkeys, NTRIALS);
 
         printf("%d %g %g %g %g\n",
                 nkeys,
@@ -560,8 +558,6 @@ int main(int argc, char *argv[])
 
         free(values);
         free(encode_buf);
-        free(encode_buf_bfs);
-        free(encode_buf_dfs);
         free_tree(tree);
         tree = NULL;
     }
