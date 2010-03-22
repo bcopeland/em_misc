@@ -30,39 +30,11 @@ struct tree_info {
 } tinfo[16];
 
 
-int bit_set(uint8_t *bitmap, int bit)
-{
-    return !!(bitmap[bit >> 3] & (1 << (bit & 7)));
-}
-
-int set_bit(uint8_t *bitmap, int bit, int val)
-{
-    bitmap[bit >> 3] |= (val << (bit & 7));
-}
-
 static int swap(int *a, int *b)
 {
     int tmp = *a;
     *a = *b;
     *b = tmp;
-}
-
-int fls(int f)
-{
-    int order;
-    for (order = 0; f; f >>= 1, order++) ;
-
-    return order;
-}
-
-int hyperfloor(int f)
-{
-    return 1 << (fls(f) - 1);
-}
-
-int hyperceil(int f)
-{
-    return 1 << fls(f-1);
 }
 
 /* Update parent pointers in array to point to this node
