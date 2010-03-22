@@ -487,7 +487,7 @@ int main(int argc, char *argv[])
     struct tree_node *tree = NULL;
 
     srandom(10);
-    for (nkeys=(1<<18); nkeys <= MAX_KEYS; nkeys <<= 1)
+    for (nkeys=(1<<8); nkeys <= MAX_KEYS; nkeys <<= 1)
     {
         values = malloc(nkeys * sizeof(int));
 
