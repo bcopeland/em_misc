@@ -205,10 +205,10 @@ bool pma_bin_search(int *region, int min_i, int max_i, int value,
     int mid;
     int l, r;
 
+    mid = (min_i + max_i)/2;
+
     while (min_i != max_i)
     {
-        mid = (min_i + max_i)/2;
-
         /* now scan left & right to find a non-empty slot */
         l = r = mid;
         while (empty(region, l) &&
@@ -232,6 +232,8 @@ bool pma_bin_search(int *region, int min_i, int max_i, int value,
             max_i = mid - 1;
         else
             break;
+
+        mid = (min_i + max_i)/2;
     }
     *ins_pt = mid;
     return region[mid] == value;
