@@ -30,7 +30,7 @@ struct tree_info {
 } tinfo[16];
 
 
-static int swap(int *a, int *b)
+static void swap(int *a, int *b)
 {
     int tmp = *a;
     *a = *b;
@@ -102,6 +102,7 @@ int encode_tree_bfs(struct tree_node *root, int pos, int height,
         if (node->right)
             g_queue_push_tail(queue, node->right);
     }
+    return 0;
 }
 
 int encode_tree(struct tree_node *root, int pos, int height,
@@ -173,7 +174,7 @@ struct tree_node *build_numbered_tree_int(int height)
 {
     struct tree_node *node;
     if (height == 0)
-        return;
+        return NULL;
 
     node = malloc(sizeof(*node));
     memset(node, 0, sizeof(*node));
@@ -258,8 +259,6 @@ struct tree_node *rotate_right(struct tree_node *tree)
 
 struct tree_node *rotate_left(struct tree_node *tree)
 {
-    int itmp;
-
     if (tree->right)
     {
         struct tree_node *tmp;
@@ -462,7 +461,7 @@ u64 runprof(struct tree_node *tree, int *values, int nkeys, int ntrials)
     return diff_time.tv_sec * 1000000 + (diff_time.tv_nsec / 1000);
 }
 
-int permute_array(int *array, int count)
+void permute_array(int *array, int count)
 {
     int i, j;
 
@@ -476,12 +475,9 @@ int permute_array(int *array, int count)
 
 int main(int argc, char *argv[])
 {
-    FILE *fp;
     struct tree_node *encode_buf;
-    int n_strs = 0, i;
-    int count = 0;
+    int i;
     int *values;
-    u64 time;
     int nkeys;
 
     struct tree_node *tree = NULL;
@@ -533,4 +529,5 @@ int main(int argc, char *argv[])
         free_tree(tree);
         tree = NULL;
     }
+    return 0;
 }
