@@ -72,13 +72,19 @@ struct pma *pma_new(int initial_size)
     return p;
 }
 
+
+int empty(int *array, int index)
+{
+    return array[index] == 0;
+}
+
 void pma_print(struct pma *p)
 {
     int i;
     for (i = 0; i < p->size; i++)
     {
         if (empty(p->region, i))
-            printf(".. ", p->region[i]);
+            printf(".. ");
         else
             printf("%02d ", p->region[i]);
     }
@@ -88,63 +94,70 @@ void pma_print(struct pma *p)
 int rebalance_insert(struct pma *p, int start, int height, int occupation,
                      int val)
 {
-    /* FIXME, start & ~window_size or so */
     int window_size = p->segsize * (1 << height);
-    int window_start = window_size * (start / window_size);
-    int window_end = window_size * (start / window_size + 1);
-    int length = window_end - window_start;
-    double accum = 0;
-    int to_write;
-    int i, j, swap_idx;
+    int window_start = start - start % window_size;
+    int window_end = window_start + window_size;
+    int length = window_size;
+    int i, j;
+    bool inserted = false;
+    int pos;
 
-    printf("balance size %d\n", window_size);
+    printf("balance size %d (seg size %d)\n", window_size, p->segsize);
 
     occupation += 1;
 
-    double stride = (length - occupation) / (double) (occupation);
+    /* stride is number of extra spaces to add per non-empty item,
+     * in fixed-point with 8-bits of resolution
+     */
+    unsigned int stride = ((length - occupation) << 8) / occupation;
 
-    int *tmpmem = malloc(length * sizeof(int));
-    memcpy(tmpmem, &p->region[window_start], length * sizeof(int));
-
-    for (i = 0, j = window_start; i < length; i++)
+    /* First move all of the elements to the left, including the
+     * item we wish to insert
+     */
+    for (i=j=window_start; i < window_end; i++)
     {
-        if (!empty(tmpmem, i)) {
-
-            /* swap value into the correct place */
-            if (tmpmem[i] > val) {
-                int tmp = val;
-
-                val = tmpmem[i];
-                tmpmem[i] = tmp;
+        if (!empty(p->region, i))
+        {
+            /* insert val in the proper place */
+            if (p->region[i] > val && !inserted) {
+                p->region[j++] = val;
+                inserted = true;
             }
 
-            p->region[j++] = tmpmem[i];
-
-            accum += stride;
-            occupation--;
-
-            /* add trailing gap.. this is safe as long as we grow */
-            while (accum >= 1) {
-                accum -= 1.0;
-                p->region[j++] = 0;
-            }
+            p->region[j++] = p->region[i];
         }
     }
-    if (occupation)
-        p->region[j] = val;
-}
+    if (!inserted)
+        p->region[j++] = val;
 
-int empty(int *array, int index)
-{
-    return array[index] == 0;
+    /* zero rest of array */
+    memset(&p->region[j], 0, (window_end - j) * sizeof(p->region[0]));
+
+    /* now redistribute from the right.  We compute the target
+     * spaces using fixed-point in pos.
+     */
+    pos = ((window_end - 1) << 8) - stride;
+    for (i = j-1; i >= 0; i--)
+    {
+        j = pos >> 8;
+        p->region[j] = p->region[i];
+        if (j != i)
+            p->region[i] = 0;
+
+        pos -= (1 << 8) + stride;
+    }
+    return 0;
 }
 
 double target_density(struct pma *p, int height)
 {
     int max_height = p->height;
 
-    return p->max_density + (p->max_density - p->max_seg_density) *
+    double result = p->max_density + (p->max_density - p->max_seg_density) *
         (max_height - height)/(double) max_height;
+
+    printf("tgt density at h %d is %f\n", height, result);
+    return result;
 }
 
 /*
@@ -173,11 +186,12 @@ double density(struct pma *p, int start, int height, int *occupation)
 
     *occupation = occupied;
 
+    printf("density at h %d is %g\n", height, (double)occupied / window_size);
     return (double)occupied / window_size;
 }
 
 /* insert y at pointer x.  can be binary search or tree driven. */
-int pma_insert_at(struct pma *p, int x, int y)
+void pma_insert_at(struct pma *p, int x, int y)
 {
     int occupation = 0;
     int height = 0;
@@ -248,15 +262,16 @@ int pma_insert(struct pma *p, int y)
     found = pma_bin_search(p->region, 0, p->size-1, y, &pos);
     if (!found)
         pma_insert_at(p, pos, y);
+
+    return 0;
 }
 
 
 int main(int argc, char *argv[])
 {
     struct pma *p;
-    int i, j;
 
-    p = pma_new(12);
+    p = pma_new(5);
 
     pma_print(p);
     pma_insert(p, 1);
@@ -281,5 +296,8 @@ int main(int argc, char *argv[])
     pma_print(p);
     pma_insert(p, 3);
     pma_print(p);
+    pma_insert(p, 4);
+    pma_print(p);
+    return 0;
 }
 
