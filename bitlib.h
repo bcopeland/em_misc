@@ -11,7 +11,7 @@ static inline int bit_set(uint8_t *bitmap, int bit)
     return !!(bitmap[bit >> 3] & (1 << (bit & 7)));
 }
 
-static inline int set_bit(uint8_t *bitmap, int bit, int val)
+static inline void set_bit(uint8_t *bitmap, int bit, int val)
 {
     bitmap[bit >> 3] |= (val << (bit & 7));
 }
