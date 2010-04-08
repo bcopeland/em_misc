@@ -207,7 +207,7 @@ void pma_insert_at(struct pma *p, int x, int y)
         height++;
 
     /* FIXME, if this assert fails, we need to double the PMA size */
-    assert(height <= p->height);
+    assert(height < p->height);
 
     /* rebalance this window and add y */
     rebalance_insert(p, x, height, occupation, y);
