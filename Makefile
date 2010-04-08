@@ -4,9 +4,18 @@ tree_test_objs=$(tree_test_srcs:.c=.o)
 pma_srcs=pma.c bitlib.c
 pma_objs=$(pma_srcs:.c=.o)
 
-CFLAGS=-g `pkg-config --cflags glib-2.0`
+CFLAGS=-g -Wall `pkg-config --cflags glib-2.0`
+
+%.d: %.c
+	@set -e; rm -f $@; \
+	gcc -MM $(CPPFLAGS) $< > $@.$$$$; \
+	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
+	rm -f $@.$$$$
 
 all: tree_test pma
+
+-include $(tree_test_srcs:.c=.d)
+-include $(pma_srcs:.c=.d)
 
 tree_test: $(tree_test_objs)
 	gcc -o tree_test $(tree_test_objs) `pkg-config --libs glib-2.0` -lrt
