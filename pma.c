@@ -46,7 +46,11 @@ struct pma {
     int segsize;        /* size of a segment */
     int nsegs;          /* number of segments */
     int height;         /* height of the implicit tree */
+    int nitems;         /* total number of items */
 };
+
+int rebalance_insert(struct pma *p, int start, int height,
+                     int occupation, int newval);
 
 /*
  *  Reallocates a PMA to be at least as large as new_size.
@@ -96,6 +100,7 @@ struct pma *pma_new(int initial_size)
     p->min_seg_density = 0.08;
     p->max_density = 0.7;
     p->min_density = 0.3;
+    p->nitems = 0;
 
     return p;
 }
@@ -107,6 +112,7 @@ void pma_grow(struct pma *p)
     printf("after grow, size = %d, height = %d\n", p->size, p->height);
 
     /* FIXME do we rebalance here? */
+    rebalance_insert(p, 0, p->height, p->nitems, 0);
 }
 
 int empty(int *array, int index)
@@ -168,7 +174,10 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
         }
     }
     if (newval)
+    {
         p->region[j++] = newval;
+        p->nitems++;
+    }
 
     /* zero rest of array */
     memset(&p->region[j], 0, (window_end - j) * sizeof(p->region[0]));
