@@ -245,14 +245,13 @@ void pma_insert_at(struct pma *p, int x, int y)
         height++;
 
         /* requested height is taller than the tree, double the size */
-        if (height >= p->height)
+        if (height > p->height)
         {
             pma_grow(p);
-            height--;
         }
     }
 
-    assert(height < p->height);
+    assert(height <= p->height);
 
     /* rebalance this window and add y */
     rebalance_insert(p, x, height, occupation, y);
@@ -318,32 +317,8 @@ int main(int argc, char *argv[])
 
     p = pma_new(5);
 
-    pma_print(p);
-    pma_insert(p, 1);
-    pma_print(p);
-    pma_insert(p, 10);
-    pma_print(p);
-    pma_insert(p, 33);
-    pma_print(p);
-    pma_insert(p, 1);
-    pma_print(p);
-    pma_insert(p, 2);
-    pma_print(p);
-    pma_insert(p, 80);
-    pma_print(p);
-    pma_insert(p, 37);
-    pma_print(p);
-    pma_insert(p, 1);
-    pma_print(p);
-    pma_insert(p, 400);
-    pma_print(p);
-    pma_insert(p, 200);
-    pma_print(p);
-    pma_insert(p, 3);
-    pma_print(p);
-
     int i;
-    for (i=1; i < 120; i++)
+    for (i=1; i < 20; i++)
     {
         pma_insert(p, random() % 1000);
         pma_print(p);
