@@ -49,6 +49,37 @@ struct pma {
 };
 
 /*
+ *  Reallocates a PMA to be at least as large as new_size.
+ *
+ *  The number of segments should be a power of two so that
+ *  we can construct an implicit binary tree on top of it.
+ *  The size of segments themselves, and total size of the
+ *  array, may not necessarily be a power of two.
+ *
+ *  So we set segment size to be log(new_size), then make the
+ *  number of segments the hyperceil of that value, and
+ *  increase array size accordingly.
+ *
+ *  This is used for initial allocation with p->size and
+ *  p->region set to zero.
+ */
+void pma_reallocate(struct pma *p, int new_size)
+{
+    int old_size = p->size;
+
+    int round_up_size = hyperceil(new_size);
+
+    p->segsize = ilog2(round_up_size);
+    p->nsegs = hyperceil(round_up_size / p->segsize);
+    p->size = p->nsegs * p->segsize;
+    p->region = realloc(p->region, sizeof(*p->region) * p->size);
+    p->height = ilog2(p->nsegs);
+
+    memset(&p->region[old_size], 0,
+           (p->size - old_size) * sizeof(*p->region));
+}
+
+/*
  *  Constructs a new PMA of the given size.
  *
  *  initial_size is rounded up so that the number of segments
@@ -58,12 +89,9 @@ struct pma *pma_new(int initial_size)
 {
     struct pma *p = malloc(sizeof(*p));
 
-    p->segsize = ilog2(hyperceil(initial_size));
-    p->nsegs = hyperceil(p->segsize);
-    p->size = p->nsegs * p->segsize;
-    p->region = calloc(sizeof(*p->region) * p->size, 1);
-    p->height = ilog2(p->size);
-
+    p->size = 0;
+    p->region = NULL;
+    pma_reallocate(p, initial_size);
     p->max_seg_density = 0.92;
     p->min_seg_density = 0.08;
     p->max_density = 0.7;
@@ -72,6 +100,14 @@ struct pma *pma_new(int initial_size)
     return p;
 }
 
+void pma_grow(struct pma *p)
+{
+    printf("before grow, size = %d, height = %d\n", p->size, p->height);
+    pma_reallocate(p, p->size * 2);
+    printf("after grow, size = %d, height = %d\n", p->size, p->height);
+
+    /* FIXME do we rebalance here? */
+}
 
 int empty(int *array, int index)
 {
@@ -92,19 +128,20 @@ void pma_print(struct pma *p)
 }
 
 int rebalance_insert(struct pma *p, int start, int height, int occupation,
-                     int val)
+                     int newval)
 {
     int window_size = p->segsize * (1 << height);
     int window_start = start - start % window_size;
     int window_end = window_start + window_size;
     int length = window_size;
     int i, j;
-    bool inserted = false;
     int pos;
 
     printf("balance size %d (seg size %d)\n", window_size, p->segsize);
+    assert(window_size <= p->size);
 
-    occupation += 1;
+    if (newval)
+        occupation += 1;
 
     /* stride is number of extra spaces to add per non-empty item,
      * in fixed-point with 8-bits of resolution
@@ -118,17 +155,20 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
     {
         if (!empty(p->region, i))
         {
-            /* insert val in the proper place */
-            if (p->region[i] > val && !inserted) {
-                p->region[j++] = val;
-                inserted = true;
-            }
+            /* insert new value in the proper place */
+            if (newval && p->region[i] > newval) {
 
-            p->region[j++] = p->region[i];
+                /* swap it out so we don't overwrite anything */
+                int tmp = p->region[i];
+                p->region[j++] = newval;
+                newval = tmp;
+            }
+            else
+                p->region[j++] = p->region[i];
         }
     }
-    if (!inserted)
-        p->region[j++] = val;
+    if (newval)
+        p->region[j++] = newval;
 
     /* zero rest of array */
     memset(&p->region[j], 0, (window_end - j) * sizeof(p->region[0]));
@@ -137,7 +177,7 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
      * spaces using fixed-point in pos.
      */
     pos = ((window_end - 1) << 8) - stride;
-    for (i = j-1; i >= 0; i--)
+    for (i = j-1; i >= window_start; i--)
     {
         j = pos >> 8;
         p->region[j] = p->region[i];
@@ -171,10 +211,8 @@ double density(struct pma *p, int start, int height, int *occupation)
 
     /* scan backwards to the window start and ahead to the window end */
     int window_size = p->segsize * (1 << height);
-
-    /* FIXME, start & ~window_size or so */
-    int window_start = window_size * (start / window_size);
-    int window_end = window_size * (start / window_size + 1);
+    int window_start = start - start % window_size;
+    int window_end = window_start + window_size;
 
     for (i = start; i >= window_start; i--)
         if (!empty(p->region, i))
@@ -196,17 +234,18 @@ void pma_insert_at(struct pma *p, int x, int y)
     int occupation = 0;
     int height = 0;
 
-    /* if the slot is free, go ahead and take it */
-    if (empty(p->region, x))
-    {
-        p->region[x] = y;
-        return;
-    }
-
     while (density(p, x, height, &occupation) > target_density(p, height))
+    {
         height++;
 
-    /* FIXME, if this assert fails, we need to double the PMA size */
+        /* requested height is taller than the tree, double the size */
+        if (height >= p->height)
+        {
+            pma_grow(p);
+            height--;
+        }
+    }
+
     assert(height < p->height);
 
     /* rebalance this window and add y */
@@ -221,7 +260,7 @@ bool pma_bin_search(int *region, int min_i, int max_i, int value,
 
     mid = (min_i + max_i)/2;
 
-    while (min_i != max_i)
+    while (min_i < max_i)
     {
         /* now scan left & right to find a non-empty slot */
         l = r = mid;
@@ -284,20 +323,25 @@ int main(int argc, char *argv[])
     pma_print(p);
     pma_insert(p, 2);
     pma_print(p);
-    pma_insert(p, 8);
-    pma_print(p);
-    pma_insert(p, 12);
-    pma_print(p);
-    pma_insert(p, 1);
-    pma_print(p);
-    pma_insert(p, 35);
+    pma_insert(p, 80);
     pma_print(p);
     pma_insert(p, 37);
     pma_print(p);
+    pma_insert(p, 1);
+    pma_print(p);
+    pma_insert(p, 400);
+    pma_print(p);
+    pma_insert(p, 200);
+    pma_print(p);
     pma_insert(p, 3);
     pma_print(p);
-    pma_insert(p, 4);
-    pma_print(p);
+
+    int i;
+    for (i=1; i < 120; i++)
+    {
+        pma_insert(p, random() % 1000);
+        pma_print(p);
+    }
     return 0;
 }
 
