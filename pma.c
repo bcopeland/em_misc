@@ -110,9 +110,6 @@ void pma_grow(struct pma *p)
     printf("before grow, size = %d, height = %d\n", p->size, p->height);
     pma_reallocate(p, p->size * 2);
     printf("after grow, size = %d, height = %d\n", p->size, p->height);
-
-    /* FIXME do we rebalance here? */
-    rebalance_insert(p, 0, p->height, p->nitems, 0);
 }
 
 int empty(int *array, int index)
