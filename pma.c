@@ -248,6 +248,7 @@ void pma_insert_at(struct pma *p, int x, int y)
         if (height > p->height)
         {
             pma_grow(p);
+            height--;
         }
     }
 
@@ -315,12 +316,12 @@ int main(int argc, char *argv[])
 {
     struct pma *p;
 
-    p = pma_new(5);
+    p = pma_new(2);
 
     int i;
-    for (i=1; i < 20; i++)
+    for (i=1; i < 50; i++)
     {
-        pma_insert(p, random() % 1000);
+        pma_insert(p, random() % 100);
         pma_print(p);
     }
     return 0;
