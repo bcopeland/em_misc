@@ -4,13 +4,15 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <assert.h>
+#include "vebtree.h"
+#include "types.h"
 #include "bitlib.h"
 
 /*
  *  A packed memory array is a resizing array storing ordered values.
  *  The array is divided into windows, and then further divided into
  *  segments, each of lg N size.  Insertions are done via search of an
- *  implicit binary tree.
+ *  binary tree in vEB order.
  *
  *  Spaces are left between values to meet a density criterion in order
  *  to reduce the cost of insertions, and the array is periodically
@@ -19,44 +21,23 @@
  *  when a minimum density is reached on deletion.
  */
 
+static int rebalance_insert(struct pma *p, int start, int height,
+                            int occupation, int newval);
+
 /*
- *   N = 40
- *   lg N = 6 = seg size
- *
- *   nsegs = hyperceil(40/6) = 8
- *
- *                 48
- *         24              24
- *     12      12      12      12
- *   6 | 6 | 6 | 6 | 6 | 6 | 6 | 6
- *
- *
+ *  Set the keys in the veb tree to match the values stored in
+ *  the PMA.  Tricky?!
  */
-struct pma {
-    /* thresholds for density at lowest level */
-    double max_seg_density;
-    double min_seg_density;
-
-    /* thresholds for entire array density */
-    double max_density;
-    double min_density;
-
-    int *region;        /* allocated array */
-    int size;           /* total size of array */
-    int segsize;        /* size of a segment */
-    int nsegs;          /* number of segments */
-    int height;         /* height of the implicit tree */
-    int nitems;         /* total number of items */
-};
-
-int rebalance_insert(struct pma *p, int start, int height,
-                     int occupation, int newval);
+void rebuild_index(struct pma *p)
+{
+}
 
 /*
  *  Reallocates a PMA to be at least as large as new_size.
  *
  *  The number of segments should be a power of two so that
- *  we can construct an implicit binary tree on top of it.
+ *  we can construct a binary tree on top of it.
+ *
  *  The size of segments themselves, and total size of the
  *  array, may not necessarily be a power of two.
  *
@@ -67,7 +48,7 @@ int rebalance_insert(struct pma *p, int start, int height,
  *  This is used for initial allocation with p->size and
  *  p->region set to zero.
  */
-void pma_reallocate(struct pma *p, int new_size)
+static void pma_reallocate(struct pma *p, int new_size)
 {
     int old_size = p->size;
 
@@ -81,6 +62,10 @@ void pma_reallocate(struct pma *p, int new_size)
 
     memset(&p->region[old_size], 0,
            (p->size - old_size) * sizeof(*p->region));
+
+    p->index = veb_tree_init(p->size);
+
+    rebuild_index(p);
 }
 
 /*
@@ -96,6 +81,7 @@ struct pma *pma_new(int initial_size)
     p->size = 0;
     p->region = NULL;
     pma_reallocate(p, initial_size);
+
     p->max_seg_density = 0.92;
     p->min_seg_density = 0.08;
     p->max_density = 0.7;
@@ -105,16 +91,20 @@ struct pma *pma_new(int initial_size)
     return p;
 }
 
-void pma_grow(struct pma *p)
+void pma_free(struct pma *p)
+{
+}
+
+static void pma_grow(struct pma *p)
 {
     printf("before grow, size = %d, height = %d\n", p->size, p->height);
     pma_reallocate(p, p->size * 2);
     printf("after grow, size = %d, height = %d\n", p->size, p->height);
 }
 
-int empty(int *array, int index)
+static int empty(struct leaf *array, int index)
 {
-    return array[index] == 0;
+    return array[index].key == 0;
 }
 
 void pma_print(struct pma *p)
@@ -125,13 +115,13 @@ void pma_print(struct pma *p)
         if (empty(p->region, i))
             printf(".. ");
         else
-            printf("%02d ", p->region[i]);
+            printf("%02d ", p->region[i].key);
     }
     printf("\n");
 }
 
-int rebalance_insert(struct pma *p, int start, int height, int occupation,
-                     int newval)
+static int rebalance_insert(struct pma *p, int start, int height,
+                            int occupation, key_t new_key)
 {
     int window_size = p->segsize * (1 << height);
     int window_start = start - start % window_size;
@@ -143,7 +133,7 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
     printf("balance size %d (seg size %d)\n", window_size, p->segsize);
     assert(window_size <= p->size);
 
-    if (newval)
+    if (new_key)
         occupation += 1;
 
     /* stride is number of extra spaces to add per non-empty item,
@@ -159,20 +149,20 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
         if (!empty(p->region, i))
         {
             /* insert new value in the proper place */
-            if (newval && p->region[i] > newval) {
+            if (new_key && p->region[i].key > new_key) {
 
                 /* swap it out so we don't overwrite anything */
-                int tmp = p->region[i];
-                p->region[j++] = newval;
-                newval = tmp;
+                key_t tmp = p->region[i].key;
+                p->region[j++].key = new_key;
+                new_key = tmp;
             }
             else
-                p->region[j++] = p->region[i];
+                p->region[j++].key = p->region[i].key;
         }
     }
-    if (newval)
+    if (new_key)
     {
-        p->region[j++] = newval;
+        p->region[j++].key = new_key;
         p->nitems++;
     }
 
@@ -186,16 +176,16 @@ int rebalance_insert(struct pma *p, int start, int height, int occupation,
     for (i = j-1; i >= window_start; i--)
     {
         j = pos >> 8;
-        p->region[j] = p->region[i];
+        p->region[j].key = p->region[i].key;
         if (j != i)
-            p->region[i] = 0;
+            p->region[i].key= 0;
 
         pos -= (1 << 8) + stride;
     }
     return 0;
 }
 
-double target_density(struct pma *p, int height)
+static double target_density(struct pma *p, int height)
 {
     int max_height = p->height;
 
@@ -210,7 +200,7 @@ double target_density(struct pma *p, int height)
  *  Compute the density of a window at a certain start position
  *  and tree height.
  */
-double density(struct pma *p, int start, int height, int *occupation)
+static double density(struct pma *p, int start, int height, int *occupation)
 {
     int occupied = 0;
     int i;
@@ -235,7 +225,7 @@ double density(struct pma *p, int start, int height, int *occupation)
 }
 
 /* insert y at pointer x.  can be binary search or tree driven. */
-void pma_insert_at(struct pma *p, int x, int y)
+static void pma_insert_at(struct pma *p, int x, int y)
 {
     int occupation = 0;
     int height = 0;
@@ -258,7 +248,7 @@ void pma_insert_at(struct pma *p, int x, int y)
     rebalance_insert(p, x, height, occupation, y);
 }
 
-bool pma_bin_search(int *region, int min_i, int max_i, int value,
+static bool pma_bin_search(struct leaf *region, int min_i, int max_i, int value,
                     int *ins_pt)
 {
     int mid;
@@ -285,9 +275,9 @@ bool pma_bin_search(int *region, int min_i, int max_i, int value,
         else  /* entire region is empty, insert at current midpoint */
             break;
 
-        if (region[mid] < value)
+        if (region[mid].key < value)
             min_i = mid + 1;
-        else if (region[mid] > value)
+        else if (region[mid].key > value)
             max_i = mid - 1;
         else
             break;
@@ -295,35 +285,47 @@ bool pma_bin_search(int *region, int min_i, int max_i, int value,
         mid = (min_i + max_i)/2;
     }
     *ins_pt = mid;
-    return region[mid] == value;
+    return region[mid].key == value;
 }
 
-int pma_insert(struct pma *p, int y)
+struct leaf *pma_search(struct pma *p, key_t key)
 {
+    struct tree_node *parent;
+    struct leaf *start;
+    //struct leaf *new_item;
     int pos;
-    bool found;
 
-    /* binary search to find the predecessor item */
-    found = pma_bin_search(p->region, 0, p->size-1, y, &pos);
-    if (!found)
-        pma_insert_at(p, pos, y);
+    parent = veb_tree_find_leaf(p->index, key);
 
-    return 0;
+    start = parent->leaf;
+
+    /* scan the segment starting at parent->leaf for insert pt */
+    pma_bin_search(p->region, start - &p->region[0], p->segsize, key, &pos);
+
+    return &p->region[pos];
 }
 
-
-int main(int argc, char *argv[])
+void pma_insert(struct pma *p, key_t key)
 {
-    struct pma *p;
+    struct tree_node *parent;
+    struct leaf *start;
+    //struct leaf *new_item;
+    int pos;
 
-    p = pma_new(2);
+    parent = veb_tree_find_leaf(p->index, key);
 
-    int i;
-    for (i=1; i < 50; i++)
-    {
-        pma_insert(p, random() % 100);
-        pma_print(p);
-    }
-    return 0;
+    start = parent->leaf;
+
+    /* scan the segment starting at parent->leaf for insert pt */
+    pma_bin_search(p->region, start - &p->region[0], p->segsize, key, &pos);
+
+    /* now insert it */
+    pma_insert_at(p, pos, key);
+
+    /* update index 
+    new_item->parent = parent;
+    if (parent->key < key)
+        parent->key = key;
+    */
 }
 

@@ -1,8 +1,8 @@
 tree_test_srcs=tree_test.c bitlib.c
 tree_test_objs=$(tree_test_srcs:.c=.o)
 
-pma_srcs=pma.c bitlib.c
-pma_objs=$(pma_srcs:.c=.o)
+cobtree_srcs=cobtree.c vebtree.c pma.c bitlib.c
+cobtree_objs=$(cobtree_srcs:.c=.o)
 
 CFLAGS=-g -Wall `pkg-config --cflags glib-2.0`
 
@@ -12,16 +12,16 @@ CFLAGS=-g -Wall `pkg-config --cflags glib-2.0`
 	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$
 
-all: tree_test pma
+all: tree_test cobtree
 
 -include $(tree_test_srcs:.c=.d)
--include $(pma_srcs:.c=.d)
+-include $(cobtree_srcs:.c=.d)
 
 tree_test: $(tree_test_objs)
 	gcc -o tree_test $(tree_test_objs) `pkg-config --libs glib-2.0` -lrt
 
-pma: $(pma_objs)
-	gcc -o pma $(pma_objs) `pkg-config --libs glib-2.0` -lrt
+cobtree: $(cobtree_objs)
+	gcc -o cobtree $(cobtree_objs) `pkg-config --libs glib-2.0` -lrt
 
 clean:
-	$(RM) bitmap *.o
+	$(RM) tree_test cobtree *.o
