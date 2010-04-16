@@ -24,12 +24,70 @@
 static int rebalance_insert(struct pma *p, int start, int height,
                             int occupation, int newval);
 
+static bool empty(struct leaf *array, int index)
+{
+    return array[index].key == 0;
+}
+
+static key_t scan_minimum(struct pma *p, int start, int size)
+{
+    int i;
+
+    for (i=start; i < start + size; i++)
+    {
+        if (!empty(p->region, i))
+            return p->region[i].key;
+    }
+    return 0;
+}
+
 /*
  *  Set the keys in the veb tree to match the values stored in
- *  the PMA.  Tricky?!
+ *  the PMA.  We just scan the start of each window and load those
+ *  values directly into the tree.
+ *
+ *  Height in this case is the total max height, not height index.
+ *
+ *  TODO: there is probably a better way -- updating the nodes as
+ *  we rebalance the array and maintaining min/max as in an
+ *  interval tree, but when items move from one window to the next
+ *  it gets a little tricky.
+ *
+ *  At the leafs: take the first entry in each segment.
+ *  At the nonleafs: take the leftmost child of the right subtree
  */
-void rebuild_index(struct pma *p)
+static void rebuild_index(struct pma *p, int start, int height)
 {
+    int window_size = p->segsize * (1 << (height - 1));
+    int window_start = start - start % window_size;
+    int window_end = window_start + window_size;
+    int i, j;
+
+    /* First set all the leaves for all segments in this window.
+     * The first leaf is at bfs address (2 * nleafs) + (x / segsize).
+     */
+    int leaf_start = window_start / p->segsize;
+    int leaf_end = window_end / p->segsize;
+    for (i=leaf_start; i < leaf_end; i++)
+    {
+        key_t minval = scan_minimum(p, i * p->segsize, p->segsize);
+
+        int bfs_index = p->nsegs + i;
+
+        veb_tree_set_node_key(p->index, bfs_index, minval);
+        veb_tree_link_leaf(p->index, bfs_index, &p->region[i * p->segsize]);
+    }
+    /* now recompute the parent nodes */
+    for (i=1; i < height; i++)
+    {
+        leaf_start >>= 1;
+        leaf_end >>= 1;
+        for (j=leaf_start; j < leaf_end; j++)
+        {
+            int bfs_index = (p->nsegs >> i) + j;
+            veb_tree_recompute_index(p->index, bfs_index);
+        }
+    }
 }
 
 /*
@@ -45,8 +103,7 @@ void rebuild_index(struct pma *p)
  *  number of segments the hyperceil of that value, and
  *  increase array size accordingly.
  *
- *  This is used for initial allocation with p->size and
- *  p->region set to zero.
+ *  With an empty struct pma, performs initial allocation.
  */
 static void pma_reallocate(struct pma *p, int new_size)
 {
@@ -58,14 +115,18 @@ static void pma_reallocate(struct pma *p, int new_size)
     p->nsegs = hyperceil(round_up_size / p->segsize);
     p->size = p->nsegs * p->segsize;
     p->region = realloc(p->region, sizeof(*p->region) * p->size);
-    p->height = ilog2(p->nsegs);
+    p->height = ilog2(p->nsegs) + 1;
 
     memset(&p->region[old_size], 0,
            (p->size - old_size) * sizeof(*p->region));
 
-    p->index = veb_tree_init(p->size);
+    if (p->index)
+        veb_tree_free(p->index);
 
-    rebuild_index(p);
+    p->index = veb_tree_new(p->nsegs);
+
+    rebalance_insert(p, 0, p->height-1, p->nitems, 0);
+    rebuild_index(p, 0, p->height);
 }
 
 /*
@@ -78,8 +139,8 @@ struct pma *pma_new(int initial_size)
 {
     struct pma *p = malloc(sizeof(*p));
 
-    p->size = 0;
-    p->region = NULL;
+    memset(p, 0, sizeof(*p));
+
     pma_reallocate(p, initial_size);
 
     p->max_seg_density = 0.92;
@@ -100,11 +161,6 @@ static void pma_grow(struct pma *p)
     printf("before grow, size = %d, height = %d\n", p->size, p->height);
     pma_reallocate(p, p->size * 2);
     printf("after grow, size = %d, height = %d\n", p->size, p->height);
-}
-
-static int empty(struct leaf *array, int index)
-{
-    return array[index].key == 0;
 }
 
 void pma_print(struct pma *p)
@@ -135,6 +191,9 @@ static int rebalance_insert(struct pma *p, int start, int height,
 
     if (new_key)
         occupation += 1;
+
+    if (!occupation)
+        return 0;
 
     /* stride is number of extra spaces to add per non-empty item,
      * in fixed-point with 8-bits of resolution
@@ -187,7 +246,7 @@ static int rebalance_insert(struct pma *p, int start, int height,
 
 static double target_density(struct pma *p, int height)
 {
-    int max_height = p->height;
+    int max_height = p->height - 1;
 
     double result = p->max_density + (p->max_density - p->max_seg_density) *
         (max_height - height)/(double) max_height;
@@ -235,14 +294,14 @@ static void pma_insert_at(struct pma *p, int x, int y)
         height++;
 
         /* requested height is taller than the tree, double the size */
-        if (height > p->height)
+        if (height >= p->height)
         {
             pma_grow(p);
             height--;
         }
     }
 
-    assert(height <= p->height);
+    assert(height < p->height);
 
     /* rebalance this window and add y */
     rebalance_insert(p, x, height, occupation, y);
@@ -288,44 +347,40 @@ static bool pma_bin_search(struct leaf *region, int min_i, int max_i, int value,
     return region[mid].key == value;
 }
 
-struct leaf *pma_search(struct pma *p, key_t key)
+int pma_predecessor(struct pma *p, key_t key)
 {
     struct tree_node *parent;
     struct leaf *start;
-    //struct leaf *new_item;
     int pos;
+    int start_ofs;
 
-    parent = veb_tree_find_leaf(p->index, key);
+    parent = veb_tree_find(p->index, key);
 
     start = parent->leaf;
 
     /* scan the segment starting at parent->leaf for insert pt */
-    pma_bin_search(p->region, start - &p->region[0], p->segsize, key, &pos);
+    start_ofs = start - &p->region[0];
+    pma_bin_search(p->region, start_ofs, start_ofs + p->segsize-1, key, &pos);
 
+    return pos;
+}
+
+struct leaf *pma_search(struct pma *p, key_t key)
+{
+    int pos = pma_predecessor(p, key);
     return &p->region[pos];
 }
 
 void pma_insert(struct pma *p, key_t key)
 {
-    struct tree_node *parent;
-    struct leaf *start;
-    //struct leaf *new_item;
-    int pos;
-
-    parent = veb_tree_find_leaf(p->index, key);
-
-    start = parent->leaf;
-
-    /* scan the segment starting at parent->leaf for insert pt */
-    pma_bin_search(p->region, start - &p->region[0], p->segsize, key, &pos);
+    int pos = pma_predecessor(p, key);
 
     /* now insert it */
     pma_insert_at(p, pos, key);
 
-    /* update index 
-    new_item->parent = parent;
-    if (parent->key < key)
-        parent->key = key;
-    */
+    /* update index */
+
+    /* TODO: only partial rebuild based on window size... */
+    rebuild_index(p, 0, p->height);
 }
 

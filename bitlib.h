@@ -29,6 +29,11 @@ static inline int ilog2(int f)
     return fls(f) - 1;
 }
 
+static inline int is_power_of_two(int f)
+{
+    return (f & (f-1)) == 0;
+}
+
 static inline int hyperfloor(int f)
 {
     return 1 << (fls(f) - 1);

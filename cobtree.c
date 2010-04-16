@@ -74,8 +74,8 @@ void *empty_cache()
     return buf2;
 }
 
-#define MAX_KEYS (1 << 30)
-#define NTRIALS 1000
+#define MAX_KEYS (1 << 8)
+#define NTRIALS 10000
 int main(int argc, char *argv[])
 {
     int i;
@@ -91,8 +91,9 @@ int main(int argc, char *argv[])
 
         for (i=0; i < nkeys; i++)
         {
-            values[i] = random();
+            values[i] = random() % 1000;
             pma_insert(pma, values[i]);
+            pma_print(pma);
         }
 
         fprintf(stderr, "%d keys\n", nkeys);
