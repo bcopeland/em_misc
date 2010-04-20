@@ -186,7 +186,6 @@ static int rebalance_insert(struct pma *p, int start, int height,
     int i, j;
     int pos;
 
-    printf("balance size %d (seg size %d)\n", window_size, p->segsize);
     assert(window_size <= p->size);
 
     if (new_key)
@@ -251,7 +250,6 @@ static double target_density(struct pma *p, int height)
     double result = p->max_density + (p->max_density - p->max_seg_density) *
         (max_height - height)/(double) max_height;
 
-    printf("tgt density at h %d is %f\n", height, result);
     return result;
 }
 
@@ -279,7 +277,6 @@ static double density(struct pma *p, int start, int height, int *occupation)
 
     *occupation = occupied;
 
-    printf("density at h %d is %g\n", height, (double)occupied / window_size);
     return (double)occupied / window_size;
 }
 

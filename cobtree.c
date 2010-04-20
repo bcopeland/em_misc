@@ -56,7 +56,11 @@ u64 runprof(struct pma *pma, int *keys, int nkeys, int ntrials)
 
         int which = i % nkeys;
         leaf = pma_search(pma, keys[which]);
-        assert(leaf != NULL && leaf->key == keys[which]);
+        if (leaf != NULL && leaf->key != keys[which])
+        {
+            printf("Could not recover %d (got %d)\n", keys[which],
+                leaf->key);
+        }
     }
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     timespec_sub(&end_time, &start_time, &diff_time);
@@ -74,8 +78,8 @@ void *empty_cache()
     return buf2;
 }
 
-#define MAX_KEYS (1 << 8)
-#define NTRIALS 10000
+#define MAX_KEYS (1 << 30)
+#define NTRIALS 100000
 int main(int argc, char *argv[])
 {
     int i;
@@ -92,8 +96,12 @@ int main(int argc, char *argv[])
         for (i=0; i < nkeys; i++)
         {
             values[i] = random() % 1000;
+            if (values[i] == 0) {
+                i--;
+                continue;
+            }
             pma_insert(pma, values[i]);
-            pma_print(pma);
+            /* pma_print(pma); */
         }
 
         fprintf(stderr, "%d keys\n", nkeys);
