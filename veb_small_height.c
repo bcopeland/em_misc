@@ -15,12 +15,43 @@ static inline int tree_size(int height)
 }
 
 /*
+ *  Table-lookup based bfs-to-veb.
+ *
+ *  We waste some cycles computing pos during a search, but
+ *  this should still be much faster than recursion.
+ */
+
+static int bfs_to_veb_lu(struct level_info *l, int bfs_num)
+{
+    int pos[100];
+    int d = 0;
+    int i;
+
+    int level = ilog2(bfs_num);
+
+    pos[0] = 1;
+    for (; d <= level; d++)
+    {
+        i = bfs_num >> (level - d);
+
+        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+            (i & l[d].top_size) * (l[d].bottom_size);
+    }
+    return pos[d-1];
+}
+
+static int bfs_to_veb(struct veb *veb, int bfs_num, int height)
+{
+    return bfs_to_veb_lu(veb->level_info, bfs_num);
+}
+
+/*
  *  Given the BFS numbering of a node, compute its vEB position.
  *
  *  BFS number is in the range of 1..#nodes.  The return value
  *  is also 1-indexed.
  */
-static int bfs_to_veb(int bfs_number, int height)
+static int bfs_to_veb_recur(struct veb *veb, int bfs_number, int height)
 {
     int split;
     int top_height, bottom_height;
@@ -44,7 +75,7 @@ static int bfs_to_veb(int bfs_number, int height)
 
     /* node is located in top half - recurse */
     if (depth < top_height)
-        return bfs_to_veb(bfs_number, top_height);
+        return bfs_to_veb_recur(veb, bfs_number, top_height);
 
     /*
      * Each level adds another bit to the BFS number in the least
@@ -81,7 +112,7 @@ static int bfs_to_veb(int bfs_number, int height)
     prior_length = toptree_size +
         (subtree_root & (num_subtrees - 1)) * subtree_size;
 
-    return prior_length + bfs_to_veb(bfs_number, bottom_height);
+    return prior_length + bfs_to_veb_recur(veb, bfs_number, bottom_height);
 }
 
 static void compute_levels(struct level_info *l, int top, int height)
@@ -103,55 +134,17 @@ static void compute_levels(struct level_info *l, int top, int height)
     compute_levels(l, top + top_height, bottom_height);
 }
 
-static int lu_veb(struct level_info *l, int bfs_num)
-{
-    int pos[100];
-    int d = 0;
-    int i;
-
-    int level = ilog2(bfs_num);
-
-    pos[0] = 1;
-    for (; d <= ilog2(bfs_num); d++)
-    {
-        i = bfs_num >> (level - d);
-
-        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
-            (i & l[d].top_size) * (l[d].bottom_size);
-    }
-    return pos[d-1];
-}
 
 static int compute_level_info(struct level_info *l, int height)
 {
-    int i;
-
-    memset(&l[0], 0, sizeof(l[0]));
-
     compute_levels(l, 0, height);
-
-    l[0].bottom_size = 0;
-    l[0].subtree_depth = 0;
-    l[0].top_size = 0;
-
-    for (i=0; i < height; i++)
-    {
-        printf("For level %d: (t=%d, b=%d, p=%d)\n", i,
-            l[i].top_size,
-            l[i].bottom_size,
-            l[i].subtree_depth);
-    }
-
-    for (i=1; i < 32; i++)
-    {
-        printf("%d %d %d\n", i, bfs_to_veb(i,height), lu_veb(l,i));
-    }
+    memset(&l[0], 0, sizeof(l[0]));
     return 0;
 }
 
 static inline struct tree_node *node_at(struct veb *veb, int bfs)
 {
-    return &veb->elements[bfs_to_veb(bfs, veb->height) - 1];
+    return &veb->elements[bfs_to_veb(veb, bfs, veb->height) - 1];
 }
 
 static inline bool node_empty(struct tree_node *node)
@@ -389,15 +382,15 @@ void veb_tree_grow(struct veb *veb)
     new_scratch = malloc(sizeof(*new_scratch) * newsize);
     memset(new_elem, NULL_KEY, sizeof(*new_elem) * newsize);
     li = malloc(sizeof(*li) * height);
+    compute_level_info(li, height);
 
     for (i=1; i < oldsize; i++)
     {
-        memcpy(&new_elem[bfs_to_veb(i, height) - 1],
-               &veb->elements[bfs_to_veb(i, height-1) - 1],
+        memcpy(&new_elem[bfs_to_veb_lu(li, i) - 1],
+               &veb->elements[bfs_to_veb(veb, i, height-1) - 1],
                sizeof(new_elem[0]));
     }
 
-    compute_level_info(li, height);
 
     free(veb->elements);
     free(veb->scratch);

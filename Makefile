@@ -7,7 +7,7 @@ cobtree_objs=$(cobtree_srcs:.c=.o)
 cobtree_sh_srcs=cobtree_sh.c veb_small_height.c bitlib.c
 cobtree_sh_objs=$(cobtree_sh_srcs:.c=.o)
 
-CFLAGS=-g -Wextra -Wall `pkg-config --cflags glib-2.0`
+CFLAGS=-g -O2 -Wextra -Wall `pkg-config --cflags glib-2.0`
 
 %.d: %.c
 	@set -e; rm -f $@; \
