@@ -14,6 +14,12 @@ struct tree_node {
     /* values go here.  (Darn.) */
 };
 
+struct level_info {
+    int subtree_depth;
+    int top_size;
+    int bottom_size;
+};
+
 /* A tree in van Emde Boas layout.  All pointers are implicit. */
 struct veb {
     int height;
@@ -21,6 +27,7 @@ struct veb {
     int max_density;        /* max allowable density */
     struct tree_node *elements;
     key_t *scratch;
+    struct level_info *level_info;
 };
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))

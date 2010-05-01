@@ -4,6 +4,7 @@
 #include <time.h>
 #include <assert.h>
 #include "veb_small_height.h"
+#include "bitlib.h"
 
 /*
  *  This implements the "Locality preserving dynamic dictionary" of
@@ -37,17 +38,35 @@ void timespec_sub(struct timespec *a, struct timespec *b, struct timespec *res)
     }
 }
 
+struct timespec start_time;
+struct timespec end_time;
+
+void time_start()
+{
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+}
+
+void time_end()
+{
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+}
+
+u64 time_elapsed()
+{
+    struct timespec diff_time;
+
+    timespec_sub(&end_time, &start_time, &diff_time);
+    return diff_time.tv_sec * 1000000 + (diff_time.tv_nsec / 1000);
+}
+
 /* runs the profile loop and returns total # of us */
 u64 runprof(struct veb *veb, int *keys, int nkeys, int ntrials)
 {
     int i;
-    struct timespec start_time;
-    struct timespec end_time;
-    struct timespec diff_time;
 
     fprintf(stderr, ".\n");
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    time_start();
     for (i=0; i < ntrials; i++)
     {
         struct tree_node *node;
@@ -60,9 +79,8 @@ u64 runprof(struct veb *veb, int *keys, int nkeys, int ntrials)
                 node->key);
         }
     }
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    timespec_sub(&end_time, &start_time, &diff_time);
-    return diff_time.tv_sec * 1000000 + (diff_time.tv_nsec / 1000);
+    time_end();
+    return time_elapsed();
 }
 
 void *empty_cache()
@@ -77,34 +95,36 @@ void *empty_cache()
 }
 
 #define MAX_KEYS (1 << 30)
-#define NTRIALS 100000
+#define NTRIALS (100000000)
 int main(int argc, char *argv[])
 {
     int i;
     int nkeys;
     struct veb *veb;
     key_t *values;
+    u64 insert_time;
 
     srandom(10);
-    for (nkeys=(1<<12); nkeys <= MAX_KEYS; nkeys <<= 1)
+    for (nkeys=(1<<8); nkeys <= MAX_KEYS; nkeys <<= 1)
     {
         veb = veb_tree_new(4);
         values = malloc(nkeys * sizeof(key_t));
 
+        time_start();
         for (i=0; i < nkeys; i++)
         {
-            values[i] = random() % 1000000;
+            values[i] = random();
             veb_tree_insert(veb, values[i]);
         }
-
-        fprintf(stderr, "%d keys\n", nkeys);
+        time_end();
+        insert_time = time_elapsed();
 
         permute_array(values, nkeys);
 
         u64 search_time = runprof(veb, values, nkeys, NTRIALS);
 
-        printf("%d %g\n", nkeys,
-                search_time / 1000000.);
+        printf("%d %g %g\n", ilog2(nkeys), search_time / 1000000.,
+               insert_time / 1000000.);
 
         fflush(stdout);
         veb_tree_free(veb);

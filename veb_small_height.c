@@ -3,10 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <glib.h>
 #include "veb_small_height.h"
 #include "bitlib.h"
 
-#define NULL_KEY ~0
+#define NULL_KEY (~0)
 
 static inline int tree_size(int height)
 {
@@ -19,7 +20,7 @@ static inline int tree_size(int height)
  *  BFS number is in the range of 1..#nodes.  The return value
  *  is also 1-indexed.
  */
-int bfs_to_veb(int bfs_number, int height)
+static int bfs_to_veb(int bfs_number, int height)
 {
     int split;
     int top_height, bottom_height;
@@ -83,13 +84,73 @@ int bfs_to_veb(int bfs_number, int height)
     return prior_length + bfs_to_veb(bfs_number, bottom_height);
 }
 
+static void compute_levels(struct level_info *l, int top, int height)
+{
+    int split, top_height, bottom_height;
+
+    if (height == 1)
+        return;
+
+    split = hyperceil((height + 1) / 2);
+    bottom_height = split;
+    top_height = height - bottom_height;
+
+    l[top + top_height].subtree_depth = top;
+    l[top + top_height].top_size = tree_size(top_height);
+    l[top + top_height].bottom_size = tree_size(bottom_height);
+
+    compute_levels(l, top, top_height);
+    compute_levels(l, top + top_height, bottom_height);
+}
+
+static int lu_veb(struct level_info *l, int bfs_num)
+{
+    int pos[100];
+    int d = 0;
+    int i;
+
+    int level = ilog2(bfs_num);
+
+    pos[0] = 1;
+    for (; d <= ilog2(bfs_num); d++)
+    {
+        i = bfs_num >> (level - d);
+
+        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+            (i & l[d].top_size) * (l[d].bottom_size);
+    }
+    return pos[d-1];
+}
+
+static int compute_level_info(struct level_info *l, int height)
+{
+    int i;
+
+    memset(&l[0], 0, sizeof(l[0]));
+
+    compute_levels(l, 0, height);
+
+    l[0].bottom_size = 0;
+    l[0].subtree_depth = 0;
+    l[0].top_size = 0;
+
+    for (i=0; i < height; i++)
+    {
+        printf("For level %d: (t=%d, b=%d, p=%d)\n", i,
+            l[i].top_size,
+            l[i].bottom_size,
+            l[i].subtree_depth);
+    }
+
+    for (i=1; i < 32; i++)
+    {
+        printf("%d %d %d\n", i, bfs_to_veb(i,height), lu_veb(l,i));
+    }
+    return 0;
+}
+
 static inline struct tree_node *node_at(struct veb *veb, int bfs)
 {
-    if (bfs_to_veb(bfs,veb->height) - 1 > tree_size(veb->height))
-    {
-        printf("size: %d %d %d\n", bfs, bfs_to_veb(bfs, veb->height),
-            tree_size(veb->height));
-    }
     return &veb->elements[bfs_to_veb(bfs, veb->height) - 1];
 }
 
@@ -223,9 +284,10 @@ void veb_tree_set_node_key(struct veb *veb, int bfs_index, key_t key)
  */
 int density(int occupation, int height)
 {
-    int nodes = (1 << height) - 1;
+    int nodes = tree_size(height);
 
-    return (occupation << 16) / nodes;
+    u64 tmp = occupation;
+    return (tmp << 16) / nodes;
 }
 
 /*
@@ -242,35 +304,21 @@ int target_density(struct veb *veb, int height)
 }
 
 void veb_tree_distribute(struct veb *veb, int bfs_root,
-                         key_t *scratch, int count, int node_count)
+                         key_t *scratch, int ofs, int count)
 {
     int item = count/2;
-
-    /* since there are an odd number of elements at any tree,
-     * left and right always have same size
-     */
-    int child_sz = node_count / 2;
+    int left_ct = item;
+    int right_ct = count - item - 1;
 
     assert(bfs_root < (1 << veb->height));
 
-    if (item == -1)
-        node_at(veb, bfs_root)->key = NULL_KEY;
-    else
-        node_at(veb, bfs_root)->key = scratch[item];
+    node_at(veb, bfs_root)->key = scratch[ofs + item];
 
-    /* out of elements? tell the lower levels to zero fill */
-    if (item == 0)
-        count = -1;
-    else
-        count = item;
-
-    if (child_sz > 0)
-    {
-        veb_tree_distribute(veb, bfs_left(bfs_root), scratch, count,
-            child_sz);
-        veb_tree_distribute(veb, bfs_right(bfs_root), &scratch[item + 1],
-            count, child_sz);
-    }
+    if (left_ct > 0)
+        veb_tree_distribute(veb, bfs_left(bfs_root), scratch, ofs, left_ct);
+    if (right_ct > 0)
+        veb_tree_distribute(veb, bfs_right(bfs_root), scratch,
+            ofs + item + 1, right_ct);
 }
 
 /*
@@ -292,6 +340,9 @@ static int serialize(struct veb *veb, int bfs_root, key_t insert,
     int count = 0;
     int bfs = bfs_first(veb, bfs_root);
     bool inserted = false;
+    struct tree_node *node;
+
+    GQueue *queue = g_queue_new();
 
     while (bfs != -1)
     {
@@ -301,6 +352,7 @@ static int serialize(struct veb *veb, int bfs_root, key_t insert,
             scratch[count++] = insert;
             inserted = true;
         }
+        g_queue_push_tail(queue, node);
 
         scratch[count++] = node->key;
 
@@ -309,6 +361,13 @@ static int serialize(struct veb *veb, int bfs_root, key_t insert,
 
     if (!inserted)
         scratch[count++] = insert;
+
+    while (!g_queue_is_empty(queue))
+    {
+        node = g_queue_pop_head(queue);
+        node->key = NULL_KEY;
+    }
+    g_queue_free(queue);
 
     return count;
 }
@@ -323,14 +382,13 @@ void veb_tree_grow(struct veb *veb)
     int oldsize = (1 << veb->height) - 1;
     int newsize = 1 << height;
     struct tree_node *new_elem;
+    struct level_info *li;
     key_t *new_scratch;
 
     new_elem = malloc(sizeof(*new_elem) * newsize);
     new_scratch = malloc(sizeof(*new_scratch) * newsize);
     memset(new_elem, NULL_KEY, sizeof(*new_elem) * newsize);
-
-    printf("Alloced %d nodes\n", newsize);
-    printf("Copying %d nodes\n", oldsize);
+    li = malloc(sizeof(*li) * height);
 
     for (i=1; i < oldsize; i++)
     {
@@ -339,9 +397,12 @@ void veb_tree_grow(struct veb *veb)
                sizeof(new_elem[0]));
     }
 
+    compute_level_info(li, height);
+
     free(veb->elements);
     free(veb->scratch);
 
+    veb->level_info = li;
     veb->elements = new_elem;
     veb->scratch = new_scratch;
     veb->height++;
@@ -396,13 +457,13 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, key_t search_key)
     count = serialize(veb, parent, search_key, veb->scratch);
 
     if (count >= (1 << height) - 1){
-        printf("count: %d (height %d)\n", count, height);
-        veb_tree_print_in_order(veb);
+        printf("count: %d (height %d) occupation %d dens %d\n", count, height,
+                occupation, density(occupation,height));
         assert(count < (1 << height) - 1);
     }
 
     /* now redistribute */
-    veb_tree_distribute(veb, parent, veb->scratch, count, (1 << height) - 1);
+    veb_tree_distribute(veb, parent, veb->scratch, 0, count);
     return 0;
 }
 
@@ -454,30 +515,21 @@ struct tree_node *veb_tree_search(struct veb *veb, key_t search_key)
 {
     int i;
     int cmp;
-    struct tree_node *root = veb->elements;
-    struct tree_node *node = root;
     int bfs_num = 1;
 
     for (i=1; i < veb->height; i++)
     {
-        int lefti = bfs_left(bfs_num);
-        int righti = bfs_right(bfs_num);
-        struct tree_node *left = node_at(veb, lefti);
-        struct tree_node *right = node_at(veb, righti);
+        struct tree_node *node = node_at(veb, bfs_num);
 
         cmp = search_key - node->key;
 
         if (cmp == 0)
             return node;
 
-        if (cmp < 0) {
-            node = left;
-            bfs_num = lefti;
-        }
-        else {
-            node = right;
-            bfs_num = righti;
-        }
+        if (cmp < 0)
+            bfs_num = bfs_left(bfs_num);
+        else
+            bfs_num = bfs_right(bfs_num);
     }
     return NULL;
 }
@@ -496,14 +548,18 @@ struct veb *veb_tree_new(int nitems)
     struct tree_node *elements = malloc(sizeof(*elements) * nodes);
     key_t *scratch = malloc(sizeof(*scratch) * nodes);
 
-    printf("Alloced %d nodes\n", nodes);
+    struct level_info *li = malloc(sizeof(*li) * height);
+
+    /* printf("Alloced %d nodes\n", nodes); */
 
     memset(elements, NULL_KEY, sizeof(*elements) * nodes);
 
     /* density range from 0.5 to 1 */
-    veb->min_density = 1 << 15;
-    veb->max_density = 1 << 16;
+    veb->min_density = 0x08000;
+    veb->max_density = 0x10000;
+    compute_level_info(li, height);
 
+    veb->level_info = li;
     veb->elements = elements;
     veb->scratch = scratch;
     veb->height = height;
@@ -512,7 +568,6 @@ struct veb *veb_tree_new(int nitems)
 
 void veb_tree_free(struct veb *veb)
 {
-    /* something bad going on here... */
     free(veb->elements);
     free(veb->scratch);
     free(veb);
