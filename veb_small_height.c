@@ -8,6 +8,7 @@
 #include "bitlib.h"
 
 #define NULL_KEY (~0)
+#define MAX_HEIGHT 64
 
 static inline int tree_size(int height)
 {
@@ -506,13 +507,19 @@ int veb_tree_insert(struct veb *veb, key_t search_key)
  */
 struct tree_node *veb_tree_search(struct veb *veb, key_t search_key)
 {
-    int i;
+    int d;
     int cmp;
     int bfs_num = 1;
+    int pos[MAX_HEIGHT];
+    struct level_info *l = veb->level_info;
 
-    for (i=1; i < veb->height; i++)
+    pos[0] = 0;
+    for (d=0; d < veb->height; d++)
     {
-        struct tree_node *node = node_at(veb, bfs_num);
+        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+            (bfs_num & l[d].top_size) * (l[d].bottom_size);
+
+        struct tree_node *node = &veb->elements[pos[d]];
 
         cmp = search_key - node->key;
 
