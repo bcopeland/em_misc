@@ -7,8 +7,17 @@
 #include "veb_small_height.h"
 #include "bitlib.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+
 #define NULL_KEY (~0)
 #define MAX_HEIGHT 64
+
+//#define TEST_BFS
+#define USE_MMAP
 
 static inline int tree_size(int height)
 {
@@ -27,6 +36,10 @@ static int bfs_to_veb_lu(struct level_info *l, int bfs_num)
     int pos[100];
     int d = 0;
     int i;
+
+#ifdef TEST_BFS
+    return bfs_num;
+#endif
 
     int level = ilog2(bfs_num);
 
@@ -366,6 +379,44 @@ static int serialize(struct veb *veb, int bfs_root, key_t insert,
     return count;
 }
 
+
+/*
+ * mmap wrappers
+ */
+void *get_memory(int size)
+{
+#ifdef USE_MMAP
+    void *ptr;
+    char fn[80];
+    static int count = 0;
+
+    sprintf(fn, "veb_%d.mmap", count++);
+
+    int fd = open(fn, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        perror("open");
+        return NULL;
+    }
+
+    ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ftruncate(fd, size);
+    //unlink(fn);
+
+    return ptr;
+#else
+    return malloc(size);
+#endif
+}
+
+void release_memory(void *ptr, int size)
+{
+#ifdef USE_MMAP
+    munmap(ptr, size);
+#else
+    free(ptr);
+#endif
+}
+
 /*
  *  Embiggen the tree.
  */
@@ -379,7 +430,7 @@ void veb_tree_grow(struct veb *veb)
     struct level_info *li;
     key_t *new_scratch;
 
-    new_elem = malloc(sizeof(*new_elem) * newsize);
+    new_elem = get_memory(sizeof(*new_elem) * newsize);
     new_scratch = malloc(sizeof(*new_scratch) * newsize);
     memset(new_elem, NULL_KEY, sizeof(*new_elem) * newsize);
     li = malloc(sizeof(*li) * height);
@@ -393,7 +444,7 @@ void veb_tree_grow(struct veb *veb)
     }
 
 
-    free(veb->elements);
+    release_memory(veb->elements, 1 << veb->height);
     free(veb->scratch);
 
     veb->level_info = li;
@@ -469,13 +520,23 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, key_t search_key)
 int veb_tree_insert(struct veb *veb, key_t search_key)
 {
     int res;
-    int i;
+    int d;
     int cmp;
     int bfs_num = 1;
+    int pos[MAX_HEIGHT];
+    struct level_info *l = veb->level_info;
 
-    for (i=1; i < veb->height; i++)
+    pos[0] = 0;
+    for (d=0; d < veb->height; d++)
     {
+#ifdef TEST_BFS
         struct tree_node *node = node_at(veb, bfs_num);
+#else
+        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+            (bfs_num & l[d].top_size) * (l[d].bottom_size);
+
+        struct tree_node *node = &veb->elements[pos[d]];
+#endif
 
         cmp = search_key - node->key;
 
@@ -516,10 +577,14 @@ struct tree_node *veb_tree_search(struct veb *veb, key_t search_key)
     pos[0] = 0;
     for (d=0; d < veb->height; d++)
     {
+#ifdef TEST_BFS
+        struct tree_node *node = node_at(veb, bfs_num);
+#else
         pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
             (bfs_num & l[d].top_size) * (l[d].bottom_size);
 
         struct tree_node *node = &veb->elements[pos[d]];
+#endif
 
         cmp = search_key - node->key;
 
@@ -545,7 +610,7 @@ struct veb *veb_tree_new(int nitems)
     int nodes = 1 << height;
 
     struct veb *veb = malloc(sizeof(*veb));
-    struct tree_node *elements = malloc(sizeof(*elements) * nodes);
+    struct tree_node *elements = get_memory(sizeof(*elements) * nodes);
     key_t *scratch = malloc(sizeof(*scratch) * nodes);
 
     struct level_info *li = malloc(sizeof(*li) * height);
@@ -568,7 +633,7 @@ struct veb *veb_tree_new(int nitems)
 
 void veb_tree_free(struct veb *veb)
 {
-    free(veb->elements);
+    release_memory(veb->elements, 1 << veb->height);
     free(veb->scratch);
     free(veb);
 }

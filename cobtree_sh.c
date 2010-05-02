@@ -99,15 +99,21 @@ void *empty_cache()
 int main(int argc, char *argv[])
 {
     int i;
-    int nkeys;
+    int nkeys = 1 << 8;
+    int max_keys = MAX_KEYS;
     struct veb *veb;
     key_t *values;
     u64 insert_time;
 
-    srandom(10);
-    for (nkeys=(1<<8); nkeys <= MAX_KEYS; nkeys <<= 1)
+    if (argc > 1)
     {
-        veb = veb_tree_new(4);
+        nkeys = max_keys = atoi(argv[1]);
+    }
+
+    srandom(10);
+    for (; nkeys <= max_keys; nkeys <<= 1)
+    {
+        veb = veb_tree_new(nkeys/4);
         values = malloc(nkeys * sizeof(key_t));
 
         time_start();
