@@ -7,11 +7,21 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-typedef int key_t;
+typedef struct {
+    u64 objectid;
+    u8 type;
+    u64 offset;
+} btrfs_key_t;
 
 struct tree_node {
-    key_t key;
+    btrfs_key_t key;
     /* values go here.  (Darn.) */
+    struct btrfs_extent_data_ref {
+        u64 root;
+        u64 objectid;
+        u64 offset;
+        u32 count;
+    } data __attribute__ ((__packed__));
 };
 
 struct level_info {
@@ -26,7 +36,7 @@ struct veb {
     int min_density;        /* min allowable density (16.16 fixed) */
     int max_density;        /* max allowable density */
     struct tree_node *elements;
-    key_t *scratch;
+    struct tree_node *scratch;
     struct level_info *level_info;
 };
 
@@ -35,12 +45,9 @@ struct veb {
 #define max(a,b) ((a)>(b)?(a):(b))
 
 /* Function prototypes */
-int veb_tree_insert(struct veb *veb, key_t search_key);
-struct tree_node *veb_tree_search(struct veb *veb, key_t search_key);
+int veb_tree_insert(struct veb *veb, btrfs_key_t *search_key);
+struct tree_node *veb_tree_search(struct veb *veb, btrfs_key_t *search_key);
 struct veb *veb_tree_new(int nitems);
 void veb_tree_free(struct veb *veb);
 void veb_tree_print(struct veb *veb);
-
-void veb_tree_set_node_key(struct veb *veb, int bfs_index, key_t key);
-void veb_tree_recompute_index(struct veb *veb, int bfs_index);
 #endif

@@ -19,10 +19,10 @@ void die(char *s)
     exit(-1);
 }
 
-void permute_array(key_t *array, int count)
+void permute_array(btrfs_key_t *array, int count)
 {
     int i, j;
-    key_t tmp;
+    btrfs_key_t tmp;
 
     srand(100);
     for (i=0; i < count; i++)
@@ -66,7 +66,7 @@ void perf_start()
 
     memset(&attr, 0, sizeof(attr));
 
-    ret = pfm_get_perf_event_encoding("coreduo::LLC_MISSES", PFM_PLM3,
+    ret = pfm_get_perf_event_encoding("LLC_MISSES", PFM_PLM3,
         &attr, NULL, NULL);
 
     if (ret != PFM_SUCCESS)
@@ -115,7 +115,7 @@ u64 time_elapsed()
 }
 
 /* runs the profile loop and returns total # of us */
-u64 runprof(struct veb *veb, int *keys, int nkeys, int ntrials)
+u64 runprof(struct veb *veb, btrfs_key_t *keys, int nkeys, int ntrials)
 {
     int i;
 
@@ -128,11 +128,12 @@ u64 runprof(struct veb *veb, int *keys, int nkeys, int ntrials)
         struct tree_node *node;
 
         int which = i % nkeys;
-        node = veb_tree_search(veb, keys[which]);
-        if (node == NULL || node->key != keys[which])
+        node = veb_tree_search(veb, &keys[which]);
+        if (node == NULL ||
+            node->key.objectid != keys[which].objectid)
         {
-            printf("Could not recover %d (got %d)\n", keys[which],
-                node->key);
+            printf("Could not recover %ld (got %ld)\n", keys[which].objectid,
+                node->key.objectid);
         }
     }
     time_end();
@@ -152,14 +153,14 @@ void *empty_cache()
 }
 
 #define MAX_KEYS (1 << 30)
-#define NTRIALS (10000)
+#define NTRIALS (1000000)
 int main(int argc, char *argv[])
 {
     int i;
     int nkeys = 1 << 8;
     int max_keys = MAX_KEYS;
     struct veb *veb;
-    key_t *values;
+    btrfs_key_t *values;
     u64 insert_time;
 
     if (argc > 1)
@@ -173,13 +174,15 @@ int main(int argc, char *argv[])
     for (; nkeys <= max_keys; nkeys <<= 1)
     {
         veb = veb_tree_new(nkeys/4);
-        values = malloc(nkeys * sizeof(key_t));
+        values = malloc(nkeys * sizeof(btrfs_key_t));
 
         time_start();
         for (i=0; i < nkeys; i++)
         {
-            values[i] = random();
-            veb_tree_insert(veb, values[i]);
+            values[i].objectid = random();
+            values[i].type = random();
+            values[i].offset = random();
+            veb_tree_insert(veb, &values[i]);
         }
         time_end();
         insert_time = time_elapsed();
@@ -195,7 +198,7 @@ int main(int argc, char *argv[])
         u64 cycles = (u64) ((double)perf_values[0] * perf_values[1])/
             perf_values[2];
 
-        printf("%d %g %g %lld\n", ilog2(nkeys), search_time / 1000000.,
+        printf("%d %g %g %ld\n", ilog2(nkeys), search_time / 1000000.,
                insert_time / 1000000., cycles);
 
         fflush(stdout);

@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
-#define NULL_KEY (~0)
+#define NULL_KEY (~0ULL)
 #define MAX_HEIGHT 64
 
 //#define TEST_BFS
@@ -56,6 +56,7 @@ static int bfs_to_veb_lu(struct level_info *l, int bfs_num)
 
 static int bfs_to_veb(struct veb *veb, int bfs_num, int height)
 {
+    (void)height;
     return bfs_to_veb_lu(veb->level_info, bfs_num);
 }
 
@@ -129,6 +130,23 @@ static int bfs_to_veb_recur(struct veb *veb, int bfs_number, int height)
     return prior_length + bfs_to_veb_recur(veb, bfs_number, bottom_height);
 }
 
+static inline int compare_key(btrfs_key_t *k1, btrfs_key_t *k2)
+{
+    if (k1->objectid > k2->objectid)
+            return 1;
+    if (k1->objectid < k2->objectid)
+            return -1;
+    if (k1->type > k2->type)
+            return 1;
+    if (k1->type < k2->type)
+            return -1;
+    if (k1->offset > k2->offset)
+            return 1;
+    if (k1->offset < k2->offset)
+            return -1;
+    return 0;
+}
+
 static void compute_levels(struct level_info *l, int top, int height)
 {
     int split, top_height, bottom_height;
@@ -163,7 +181,7 @@ static inline struct tree_node *node_at(struct veb *veb, int bfs)
 
 static inline bool node_empty(struct tree_node *node)
 {
-    return node->key == NULL_KEY;
+    return node->key.objectid == NULL_KEY;
 }
 
 static inline bool node_valid(struct veb *veb, int bfs)
@@ -257,7 +275,7 @@ void veb_tree_print_in_order(struct veb *veb)
 
     while (bfs != -1)
     {
-        printf("%d\n", node_at(veb, bfs)->key);
+        printf("%ld\n", node_at(veb, bfs)->key.objectid);
         bfs = bfs_next(veb, bfs, 1);
     }
     printf("\n");
@@ -271,15 +289,9 @@ void veb_tree_print(struct veb *veb)
         if (is_power_of_two(i+1))
             printf("\n");
 
-        printf("%04d  ", node_at(veb, i+1)->key);
+        printf("%04ld  ", node_at(veb, i+1)->key.objectid);
     }
     printf("\n");
-}
-
-
-void veb_tree_set_node_key(struct veb *veb, int bfs_index, key_t key)
-{
-    node_at(veb,bfs_index)->key = key;
 }
 
 /*
@@ -311,7 +323,7 @@ int target_density(struct veb *veb, int height)
 }
 
 void veb_tree_distribute(struct veb *veb, int bfs_root,
-                         key_t *scratch, int ofs, int count)
+                         struct tree_node *scratch, int ofs, int count)
 {
     int item = count/2;
     int left_ct = item;
@@ -319,7 +331,7 @@ void veb_tree_distribute(struct veb *veb, int bfs_root,
 
     assert(bfs_root < (1 << veb->height));
 
-    node_at(veb, bfs_root)->key = scratch[ofs + item];
+    memcpy(node_at(veb, bfs_root), &scratch[ofs + item], sizeof(scratch[0]));
 
     if (left_ct > 0)
         veb_tree_distribute(veb, bfs_left(bfs_root), scratch, ofs, left_ct);
@@ -341,8 +353,8 @@ static int tree_occupation(struct veb *veb, int bfs_root)
                tree_occupation(veb, bfs_right(bfs_root));
 }
 
-static int serialize(struct veb *veb, int bfs_root, key_t insert,
-                     key_t *scratch)
+static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
+                     struct tree_node *scratch)
 {
     int count = 0;
     int bfs = bfs_first(veb, bfs_root);
@@ -355,24 +367,24 @@ static int serialize(struct veb *veb, int bfs_root, key_t insert,
     {
         struct tree_node *node = node_at(veb, bfs);
 
-        if (insert < node->key && !inserted) {
-            scratch[count++] = insert;
+        if (compare_key(insert, &node->key) < 0 && !inserted) {
+            memcpy(&scratch[count++].key, insert, sizeof(*insert));
             inserted = true;
         }
         g_queue_push_tail(queue, node);
 
-        scratch[count++] = node->key;
+        memcpy(&scratch[count++].key, &node->key, sizeof(node->key));
 
         bfs = bfs_next(veb, bfs, bfs_root);
     }
 
     if (!inserted)
-        scratch[count++] = insert;
+        memcpy(&scratch[count++].key, insert, sizeof(*insert));
 
     while (!g_queue_is_empty(queue))
     {
         node = g_queue_pop_head(queue);
-        node->key = NULL_KEY;
+        node->key.objectid = NULL_KEY;
     }
     g_queue_free(queue);
 
@@ -428,11 +440,11 @@ void veb_tree_grow(struct veb *veb)
     int newsize = 1 << height;
     struct tree_node *new_elem;
     struct level_info *li;
-    key_t *new_scratch;
+    struct tree_node *new_scratch;
 
     new_elem = get_memory(sizeof(*new_elem) * newsize);
     new_scratch = malloc(sizeof(*new_scratch) * newsize);
-    memset(new_elem, NULL_KEY, sizeof(*new_elem) * newsize);
+    memset(new_elem, (unsigned int) NULL_KEY, sizeof(*new_elem) * newsize);
     li = malloc(sizeof(*li) * height);
     compute_level_info(li, height);
 
@@ -463,7 +475,7 @@ void veb_tree_grow(struct veb *veb)
  *  When done, reinsert all of the keys from the array using
  *  veb_tree_distribute.
  */
-int veb_tree_rebalance(struct veb *veb, int bfs_num, key_t search_key)
+int veb_tree_rebalance(struct veb *veb, int bfs_num, btrfs_key_t *search_key)
 {
     int parent;
     int height = 2;
@@ -517,7 +529,7 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, key_t search_key)
  *  add the value.  If the new depth is greater than the height bound,
  *  then the tree must be rebalanced.
  */
-int veb_tree_insert(struct veb *veb, key_t search_key)
+int veb_tree_insert(struct veb *veb, btrfs_key_t *search_key)
 {
     int res;
     int d;
@@ -538,11 +550,11 @@ int veb_tree_insert(struct veb *veb, key_t search_key)
         struct tree_node *node = &veb->elements[pos[d]];
 #endif
 
-        cmp = search_key - node->key;
+        cmp = compare_key(search_key, &node->key);
 
         if (node_empty(node) || cmp == 0)
         {
-            node->key = search_key;
+            memcpy(&node->key, search_key, sizeof(*search_key));
             return 0;
         }
 
@@ -566,7 +578,7 @@ int veb_tree_insert(struct veb *veb, key_t search_key)
  *  Search down the tree to find the leaf that points to the segment
  *  containing search_key.  The internal node is returned.
  */
-struct tree_node *veb_tree_search(struct veb *veb, key_t search_key)
+struct tree_node *veb_tree_search(struct veb *veb, btrfs_key_t *search_key)
 {
     int d;
     int cmp;
@@ -586,7 +598,7 @@ struct tree_node *veb_tree_search(struct veb *veb, key_t search_key)
         struct tree_node *node = &veb->elements[pos[d]];
 #endif
 
-        cmp = search_key - node->key;
+        cmp = compare_key(search_key, &node->key);
 
         if (cmp == 0)
             return node;
@@ -611,13 +623,13 @@ struct veb *veb_tree_new(int nitems)
 
     struct veb *veb = malloc(sizeof(*veb));
     struct tree_node *elements = get_memory(sizeof(*elements) * nodes);
-    key_t *scratch = malloc(sizeof(*scratch) * nodes);
+    struct tree_node *scratch = malloc(sizeof(*scratch) * nodes);
 
     struct level_info *li = malloc(sizeof(*li) * height);
 
     /* printf("Alloced %d nodes\n", nodes); */
 
-    memset(elements, NULL_KEY, sizeof(*elements) * nodes);
+    memset(elements, (int) NULL_KEY, sizeof(*elements) * nodes);
 
     /* density range from 0.5 to 1 */
     veb->min_density = 0x08000;
