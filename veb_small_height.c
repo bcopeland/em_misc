@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
-#define NULL_KEY (~0ULL)
+#define NULL_KEY (0ULL)
 #define MAX_HEIGHT 64
 
 //#define TEST_BFS
@@ -275,7 +275,7 @@ void veb_tree_print_in_order(struct veb *veb)
 
     while (bfs != -1)
     {
-        printf("%ld\n", node_at(veb, bfs)->key.objectid);
+        printf("%lld\n", (unsigned long long) node_at(veb, bfs)->key.objectid);
         bfs = bfs_next(veb, bfs, 1);
     }
     printf("\n");
@@ -289,7 +289,7 @@ void veb_tree_print(struct veb *veb)
         if (is_power_of_two(i+1))
             printf("\n");
 
-        printf("%04ld  ", node_at(veb, i+1)->key.objectid);
+        printf("%lld  ", (unsigned long long) node_at(veb, i+1)->key.objectid);
     }
     printf("\n");
 }
@@ -367,7 +367,7 @@ static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
     {
         struct tree_node *node = node_at(veb, bfs);
 
-        if (compare_key(insert, &node->key) < 0 && !inserted) {
+        if (insert && compare_key(insert, &node->key) < 0 && !inserted) {
             memcpy(&scratch[count++].key, insert, sizeof(*insert));
             inserted = true;
         }
@@ -378,7 +378,7 @@ static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
         bfs = bfs_next(veb, bfs, bfs_root);
     }
 
-    if (!inserted)
+    if (!inserted && insert)
         memcpy(&scratch[count++].key, insert, sizeof(*insert));
 
     while (!g_queue_is_empty(queue))
@@ -391,42 +391,47 @@ static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
     return count;
 }
 
-
-/*
- * mmap wrappers
- */
-void *get_memory(int size)
+static int mem_used = 0;
+void *setup_mmap(int initial_size)
 {
-#ifdef USE_MMAP
     void *ptr;
-    char fn[80];
-    static int count = 0;
+    char *fn = "mmap_region.dat";
+    int res;
 
-    sprintf(fn, "veb_%d.mmap", count++);
-
-    int fd = open(fn, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    int fd = open(fn, O_RDWR | O_CREAT, 0644);
     if (fd < 0) {
         perror("open");
         return NULL;
     }
 
-    ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ftruncate(fd, size);
-    //unlink(fn);
+    ptr = mmap(NULL, 0x7fffffff, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED)
+    {
+        perror("mmap");
+        die("");
+    }
+    res = ftruncate(fd, 0x7fffffff);
+    if (res < 0)
+    {
+        perror("ftruncate");
+        die("");
+    }
+
+    mem_used = initial_size;
 
     return ptr;
-#else
-    return malloc(size);
-#endif
 }
 
-void release_memory(void *ptr, int size)
+void *realloc_mem(void *ptr, int new_size)
 {
-#ifdef USE_MMAP
-    munmap(ptr, size);
-#else
-    free(ptr);
-#endif
+    mem_used = new_size;
+    return ptr;
+}
+
+void release_memory(void *ptr)
+{
+    msync(ptr, 0x7fffffff, MS_SYNC);
+    munmap(ptr, 0x7fffffff);
 }
 
 /*
@@ -434,35 +439,30 @@ void release_memory(void *ptr, int size)
  */
 void veb_tree_grow(struct veb *veb)
 {
-    int i;
     int height = veb->height + 1;
-    int oldsize = (1 << veb->height) - 1;
     int newsize = 1 << height;
     struct tree_node *new_elem;
     struct level_info *li;
     struct tree_node *new_scratch;
+    int count;
 
-    new_elem = get_memory(sizeof(*new_elem) * newsize);
+    new_elem = realloc_mem(veb->elements, sizeof(*new_elem) * newsize);
     new_scratch = malloc(sizeof(*new_scratch) * newsize);
-    memset(new_elem, (unsigned int) NULL_KEY, sizeof(*new_elem) * newsize);
     li = malloc(sizeof(*li) * height);
     compute_level_info(li, height);
 
-    for (i=1; i < oldsize; i++)
-    {
-        memcpy(&new_elem[bfs_to_veb_lu(li, i) - 1],
-               &veb->elements[bfs_to_veb(veb, i, height-1) - 1],
-               sizeof(new_elem[0]));
-    }
-
-
-    release_memory(veb->elements, 1 << veb->height);
     free(veb->scratch);
-
-    veb->level_info = li;
-    veb->elements = new_elem;
     veb->scratch = new_scratch;
+
+    // serialize entire tree
+    count = serialize(veb, 1, NULL, veb->scratch);
+
+    veb->elements = new_elem;
+    veb->level_info = li;
     veb->height++;
+
+    // now rebuild
+    veb_tree_distribute(veb, 1, veb->scratch, 0, count);
 }
 
 
@@ -622,7 +622,7 @@ struct veb *veb_tree_new(int nitems)
     int nodes = 1 << height;
 
     struct veb *veb = malloc(sizeof(*veb));
-    struct tree_node *elements = get_memory(sizeof(*elements) * nodes);
+    struct tree_node *elements = setup_mmap(sizeof(*elements) * nodes);
     struct tree_node *scratch = malloc(sizeof(*scratch) * nodes);
 
     struct level_info *li = malloc(sizeof(*li) * height);
@@ -645,7 +645,7 @@ struct veb *veb_tree_new(int nitems)
 
 void veb_tree_free(struct veb *veb)
 {
-    release_memory(veb->elements, 1 << veb->height);
+    release_memory(veb->elements);
     free(veb->scratch);
     free(veb);
 }

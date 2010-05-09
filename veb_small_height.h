@@ -50,4 +50,5 @@ struct tree_node *veb_tree_search(struct veb *veb, btrfs_key_t *search_key);
 struct veb *veb_tree_new(int nitems);
 void veb_tree_free(struct veb *veb);
 void veb_tree_print(struct veb *veb);
+void die(char *s);
 #endif

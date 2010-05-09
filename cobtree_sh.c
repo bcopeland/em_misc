@@ -132,8 +132,9 @@ u64 runprof(struct veb *veb, btrfs_key_t *keys, int nkeys, int ntrials)
         if (node == NULL ||
             node->key.objectid != keys[which].objectid)
         {
-            printf("Could not recover %ld (got %ld)\n", keys[which].objectid,
-                node->key.objectid);
+            printf("Could not recover %lld (got %lld)\n",
+                (unsigned long long) keys[which].objectid,
+                (node) ?  (unsigned long long) node->key.objectid : 0);
         }
     }
     time_end();
@@ -198,8 +199,9 @@ int main(int argc, char *argv[])
         u64 cycles = (u64) ((double)perf_values[0] * perf_values[1])/
             perf_values[2];
 
-        printf("%d %g %g %ld\n", ilog2(nkeys), search_time / 1000000.,
-               insert_time / 1000000., cycles);
+        printf("%d %g %g %lld\n", ilog2(nkeys), search_time / 1000000.,
+               insert_time / 1000000.,
+               (unsigned long long) cycles);
 
         fflush(stdout);
         veb_tree_free(veb);
