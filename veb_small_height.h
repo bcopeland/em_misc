@@ -2,6 +2,7 @@
 #define VEBTREE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -15,13 +16,18 @@ typedef struct {
 
 struct tree_node {
     btrfs_key_t key;
-    /* values go here.  (Darn.) */
+    struct tree_node *left;
+    struct tree_node *right;
+    int payload;
+
+    /* values go here.  (Darn.) 
     struct btrfs_extent_data_ref {
         u64 root;
         u64 objectid;
         u64 offset;
         u32 count;
     } data __attribute__ ((__packed__));
+    */
 };
 
 struct level_info {
@@ -35,6 +41,7 @@ struct veb {
     int height;
     int min_density;        /* min allowable density (16.16 fixed) */
     int max_density;        /* max allowable density */
+    int count;              /* # of nodes */
     struct tree_node *elements;
     struct tree_node *scratch;
     struct level_info *level_info;
@@ -47,8 +54,9 @@ struct veb {
 /* Function prototypes */
 int veb_tree_insert(struct veb *veb, btrfs_key_t *search_key);
 struct tree_node *veb_tree_search(struct veb *veb, btrfs_key_t *search_key);
-struct veb *veb_tree_new(int nitems);
+struct veb *veb_tree_new(int nitems, bool clear);
 void veb_tree_free(struct veb *veb);
 void veb_tree_print(struct veb *veb);
+void pointerize(struct veb *veb);
 void die(char *s);
 #endif

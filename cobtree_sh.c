@@ -154,6 +154,7 @@ void *empty_cache()
 }
 
 #define MAX_KEYS (1 << 30)
+//#define NTRIALS (100000000)
 #define NTRIALS (1000000)
 int main(int argc, char *argv[])
 {
@@ -162,19 +163,39 @@ int main(int argc, char *argv[])
     int max_keys = MAX_KEYS;
     struct veb *veb;
     btrfs_key_t *values;
-    u64 insert_time;
+    u64 insert_time = 0;
+    u64 search_time = 0;
+    int opt;
+    bool do_inserts = false, do_searches = false;
+    bool clear = true;
 
-    if (argc > 1)
+    while ((opt = getopt(argc, argv, "isk:")) != -1)
     {
-        nkeys = max_keys = atoi(argv[1]);
+        switch(opt) {
+        case 'i':
+            do_inserts = true;
+            break;
+        case 's':
+            do_searches = true;
+            break;
+        case 'k':
+            nkeys = max_keys = atoi(optarg);
+            break;
+        default:
+            die("unknown param");
+        }
     }
+    if (!do_inserts && !do_searches)
+        do_inserts = do_searches = true;
+
+    clear = do_inserts;
 
     perf_init();
 
     srandom(10);
     for (; nkeys <= max_keys; nkeys <<= 1)
     {
-        veb = veb_tree_new(nkeys/4);
+        veb = veb_tree_new(nkeys/8, clear);
         values = malloc(nkeys * sizeof(btrfs_key_t));
 
         time_start();
@@ -183,15 +204,20 @@ int main(int argc, char *argv[])
             values[i].objectid = random();
             values[i].type = random();
             values[i].offset = random();
-            veb_tree_insert(veb, &values[i]);
+            if (do_inserts)
+                veb_tree_insert(veb, &values[i]);
         }
         time_end();
         insert_time = time_elapsed();
 
         permute_array(values, nkeys);
 
+        pointerize(veb);
+
         free(empty_cache());
-        u64 search_time = runprof(veb, values, nkeys, NTRIALS);
+
+        if (do_searches)
+            search_time = runprof(veb, values, nkeys, NTRIALS);
 
         if (!perf_values[2])
             perf_values[2] = 1;

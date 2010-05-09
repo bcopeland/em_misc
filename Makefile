@@ -8,6 +8,7 @@ cobtree_sh_srcs=cobtree_sh.c veb_small_height.c bitlib.c
 cobtree_sh_objs=$(cobtree_sh_srcs:.c=.o)
 
 CFLAGS=-g -O2 -Wextra -Wall `pkg-config --cflags glib-2.0`
+#CFLAGS=-g -Wextra -Wall `pkg-config --cflags glib-2.0`
 LIBS=-L/usr/local/lib -lpfm `pkg-config --libs glib-2.0` -lrt
 
 %.d: %.c
