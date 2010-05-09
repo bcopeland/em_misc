@@ -423,7 +423,8 @@ static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
 
     while (bfs != -1)
     {
-        struct tree_node *node = node_at(veb, bfs);
+        struct tree_node *node = node_at_pos(veb, bfs, veb->iter_pos,
+            ilog2(bfs));
 
         if (insert && compare_key(insert, &node->key) < 0 && !inserted) {
             memcpy(&scratch[count++].key, insert, sizeof(*insert));
