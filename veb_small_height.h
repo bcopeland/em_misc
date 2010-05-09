@@ -8,6 +8,8 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+#define MAX_HEIGHT 64
+
 typedef struct {
     u64 objectid;
     u8 type;
@@ -45,6 +47,8 @@ struct veb {
     struct tree_node *elements;
     struct tree_node *scratch;
     struct level_info *level_info;
+
+    int iter_pos[MAX_HEIGHT];
 };
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))

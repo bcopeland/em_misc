@@ -14,7 +14,6 @@
 #include <sys/mman.h>
 
 #define NULL_KEY (0ULL)
-#define MAX_HEIGHT 64
 
 //#define TEST_BFS
 #define PTR_SEARCH
@@ -195,6 +194,20 @@ static int compute_level_info(struct level_info *l, int height)
     return 0;
 }
 
+static inline struct tree_node *node_at_pos(struct veb *veb, int bfs_num,
+                                            int *pos, int d)
+{
+    struct level_info *l = veb->level_info;
+#ifdef TEST_BFS
+    return node_at(veb, bfs_num);
+#else
+    pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+         (bfs_num & l[d].top_size) * (l[d].bottom_size);
+
+    return &veb->elements[pos[d]];
+#endif
+}
+
 static inline struct tree_node *node_at(struct veb *veb, int bfs)
 {
     return &veb->elements[bfs_to_veb(veb, bfs, veb->height) - 1];
@@ -212,18 +225,11 @@ static inline bool node_valid(struct veb *veb, int bfs)
         !node_empty(node_at(veb, bfs));
 }
 
-static inline struct tree_node *node_at_pos(struct veb *veb, int bfs_num,
-                                            int *pos, int d)
+static inline bool node_valid_pos(struct veb *veb, int bfs)
 {
-    struct level_info *l = veb->level_info;
-#ifdef TEST_BFS
-    return node_at(veb, bfs_num);
-#else
-    pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
-         (bfs_num & l[d].top_size) * (l[d].bottom_size);
-
-    return &veb->elements[pos[d]];
-#endif
+    return bfs > 0 &&
+        bfs <= ((1 << veb->height) - 1) &&
+        !node_empty(node_at_pos(veb, bfs, veb->iter_pos, ilog2(bfs)));
 }
 
 static inline int bfs_left(int bfs_num)
@@ -258,10 +264,12 @@ static int bfs_first(struct veb *veb, int subtree_root)
 {
     int bfs = subtree_root;
 
-    if (!node_valid(veb, bfs))
+    fill_pos(veb->level_info, subtree_root, veb->iter_pos);
+
+    if (!node_valid_pos(veb, bfs))
         return -1;
 
-    while (node_valid(veb, bfs))
+    while (node_valid_pos(veb, bfs))
         bfs = bfs_left(bfs);
 
     return bfs_parent(bfs);
@@ -273,15 +281,15 @@ static int bfs_next(struct veb *veb, int bfs_num, int subtree_root)
 
     /* If at root with no right child, done */
     if (bfs_num == subtree_root &&
-        !node_valid(veb, bfs_right(bfs_num)))
+        !node_valid_pos(veb, bfs_right(bfs_num)))
         return -1;
 
     /* If there's a right child, go right then all the way left */
-    if (node_valid(veb, bfs_right(bfs_num)))
+    if (node_valid_pos(veb, bfs_right(bfs_num)))
     {
         bfs_next = bfs_right(bfs_num);
 
-        while (node_valid(veb, bfs_next))
+        while (node_valid_pos(veb, bfs_next))
             bfs_next = bfs_left(bfs_next);
 
         return bfs_parent(bfs_next);
@@ -396,7 +404,7 @@ void veb_tree_distribute(struct veb *veb, int bfs_root,
  */
 static int tree_occupation(struct veb *veb, int bfs_root)
 {
-    if (!node_valid(veb, bfs_root))
+    if (!node_valid_pos(veb, bfs_root))
         return 0;
 
     return 1 + tree_occupation(veb, bfs_left(bfs_root)) +
@@ -572,6 +580,7 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, btrfs_key_t *search_key)
      * we meet the density.
      */
     parent = bfs_parent(bfs_num);
+    fill_pos(veb->level_info, parent, veb->iter_pos);
     occupation += tree_occupation(veb, bfs_peer(bfs_num)) + 1;
 
     while (density(occupation, height) >= target_density(veb, height))
@@ -755,6 +764,7 @@ struct veb *veb_tree_new(int nitems, bool clear)
     veb->scratch = scratch;
     veb->height = height;
     veb->count = 0;
+    veb->iter_pos[0] = 0;
 
     return veb;
 }
