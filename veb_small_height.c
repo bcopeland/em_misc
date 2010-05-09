@@ -54,6 +54,27 @@ static int bfs_to_veb_lu(struct level_info *l, int bfs_num)
     return pos[d-1];
 }
 
+/*
+ *  Setup pos tracking array for a given root.
+ */
+static int fill_pos(struct level_info *l, int bfs_num, int *pos)
+{
+    int d = 0;
+    int i;
+
+    int level = ilog2(bfs_num);
+
+    pos[0] = 0;
+    for (; d <= level; d++)
+    {
+        i = bfs_num >> (level - d);
+
+        pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+            (i & l[d].top_size) * (l[d].bottom_size);
+    }
+    return level;
+}
+
 static int bfs_to_veb(struct veb *veb, int bfs_num, int height)
 {
     (void)height;
@@ -191,6 +212,20 @@ static inline bool node_valid(struct veb *veb, int bfs)
         !node_empty(node_at(veb, bfs));
 }
 
+static inline struct tree_node *node_at_pos(struct veb *veb, int bfs_num,
+                                            int *pos, int d)
+{
+    struct level_info *l = veb->level_info;
+#ifdef TEST_BFS
+    return node_at(veb, bfs_num);
+#else
+    pos[d] = pos[l[d].subtree_depth] + l[d].top_size +
+         (bfs_num & l[d].top_size) * (l[d].bottom_size);
+
+    return &veb->elements[pos[d]];
+#endif
+}
+
 static inline int bfs_left(int bfs_num)
 {
     return 2 * bfs_num;
@@ -322,22 +357,37 @@ int target_density(struct veb *veb, int height)
          ((height << 16) / veb->height);
 }
 
-void veb_tree_distribute(struct veb *veb, int bfs_root,
-                         struct tree_node *scratch, int ofs, int count)
+void veb_tree_distribute_inner(struct veb *veb, int bfs_root,
+                               struct tree_node *scratch, int ofs, int count,
+                               int *pos, int d)
 {
     int item = count/2;
     int left_ct = item;
     int right_ct = count - item - 1;
 
-    assert(bfs_root < (1 << veb->height));
+    assert(d < veb->height);
 
-    memcpy(node_at(veb, bfs_root), &scratch[ofs + item], sizeof(scratch[0]));
+    memcpy(node_at_pos(veb, bfs_root, pos, d), &scratch[ofs + item],
+           sizeof(scratch[0]));
 
     if (left_ct > 0)
-        veb_tree_distribute(veb, bfs_left(bfs_root), scratch, ofs, left_ct);
+        veb_tree_distribute_inner(veb, bfs_left(bfs_root), scratch, ofs,
+                                  left_ct, pos, d+1);
     if (right_ct > 0)
-        veb_tree_distribute(veb, bfs_right(bfs_root), scratch,
-            ofs + item + 1, right_ct);
+        veb_tree_distribute_inner(veb, bfs_right(bfs_root), scratch,
+            ofs + item + 1, right_ct, pos, d+1);
+}
+
+void veb_tree_distribute(struct veb *veb, int bfs_root,
+                         struct tree_node *scratch, int ofs, int count)
+{
+    int pos[MAX_HEIGHT];
+    int depth;
+
+    assert(bfs_root < (1 << veb->height));
+
+    depth = fill_pos(veb->level_info, bfs_root, pos);
+    veb_tree_distribute_inner(veb, bfs_root, scratch, ofs, count, pos, depth);
 }
 
 /*
