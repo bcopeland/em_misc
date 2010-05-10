@@ -21,15 +21,6 @@ struct tree_node {
     struct tree_node *left;
     struct tree_node *right;
     int payload;
-
-    /* values go here.  (Darn.) 
-    struct btrfs_extent_data_ref {
-        u64 root;
-        u64 objectid;
-        u64 offset;
-        u32 count;
-    } data __attribute__ ((__packed__));
-    */
 };
 
 struct level_info {

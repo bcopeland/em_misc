@@ -347,9 +347,8 @@ void veb_tree_print(struct veb *veb)
 int density(int occupation, int height)
 {
     int nodes = tree_size(height);
-
     u64 tmp = occupation;
-    return (tmp << 16) / nodes;
+    return ((tmp << 16) + 0x8000) / nodes;
 }
 
 /*
@@ -363,6 +362,21 @@ int target_density(struct veb *veb, int height)
     return veb->max_density -
         ((veb->max_density - veb->min_density) >> 16) *
          ((height << 16) / veb->height);
+}
+
+double density_f(int occupation, int height)
+{
+    int nodes = tree_size(height);
+    return (double) occupation / nodes;
+}
+
+double target_density_f(struct veb *veb, int height)
+{
+    double maxd = veb->max_density / 65536.0;
+    double mind = veb->min_density / 65536.0;
+
+    return maxd -
+        (maxd - mind) * (((double)height - 2)/ veb->height);
 }
 
 void veb_tree_distribute_inner(struct veb *veb, int bfs_root,
@@ -398,17 +412,26 @@ void veb_tree_distribute(struct veb *veb, int bfs_root,
     veb_tree_distribute_inner(veb, bfs_root, scratch, ofs, count, pos, depth);
 }
 
+static int tree_occupation_inner(struct veb *veb, int bfs_root)
+{
+    if (!node_valid_pos(veb, bfs_root))
+        return 0;
+
+    return 1 + tree_occupation_inner(veb, bfs_left(bfs_root)) +
+               tree_occupation_inner(veb, bfs_right(bfs_root));
+}
+
 /*
  *  Returns the number of non-empty nodes in the subtree rooted
  *  at bfs_root.
  */
 static int tree_occupation(struct veb *veb, int bfs_root)
 {
-    if (!node_valid_pos(veb, bfs_root))
-        return 0;
+    int res;
+    fill_pos(veb->level_info, bfs_root, veb->iter_pos);
+    res = tree_occupation_inner(veb, bfs_root);
 
-    return 1 + tree_occupation(veb, bfs_left(bfs_root)) +
-               tree_occupation(veb, bfs_right(bfs_root));
+    return res;
 }
 
 static int serialize(struct veb *veb, int bfs_root, btrfs_key_t *insert,
@@ -584,7 +607,8 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, btrfs_key_t *search_key)
     fill_pos(veb->level_info, parent, veb->iter_pos);
     occupation += tree_occupation(veb, bfs_peer(bfs_num)) + 1;
 
-    while (density(occupation, height) >= target_density(veb, height))
+    while (density_f(occupation, height) > target_density_f(veb, height) &&
+           height < veb->height)
     {
         bfs_num = parent;
         occupation += tree_occupation(veb, bfs_peer(bfs_num)) + 1;
@@ -599,15 +623,16 @@ int veb_tree_rebalance(struct veb *veb, int bfs_num, btrfs_key_t *search_key)
         /* and retry */
         return -1;
     }
+       
     assert(parent > 0);
 
     /* copy the elements from parent into an array */
     count = serialize(veb, parent, search_key, veb->scratch);
 
-    if (count >= (1 << height) - 1){
-        printf("count: %d (height %d) occupation %d dens %d\n", count, height,
-                occupation, density(occupation,height));
-        assert(count < (1 << height) - 1);
+    if (count > (1 << height) - 1){
+        printf("count: %d (height %d) occupation %d dens %g\n", count, height,
+                occupation, density_f(occupation,height));
+        assert(count <= (1 << height) - 1);
     }
 
     /* now redistribute */
@@ -773,6 +798,7 @@ struct veb *veb_tree_new(int nitems, bool clear)
 void pointerize(struct veb *veb)
 {
     int i;
+
     for (i=1; i < (1 << veb->height); i++)
     {
         struct tree_node *node = node_at(veb, i);
