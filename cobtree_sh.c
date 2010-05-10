@@ -48,8 +48,8 @@ void timespec_sub(struct timespec *a, struct timespec *b, struct timespec *res)
 struct timespec start_time;
 struct timespec end_time;
 
-int perf_fd;
-u64 perf_values[3];
+int perf_fds[2];
+u64 perf_values[2][3];
 
 void perf_init()
 {
@@ -61,39 +61,57 @@ void perf_init()
 
 void perf_start()
 {
+    unsigned int i;
     int ret;
-    struct perf_event_attr attr;
+    struct perf_event_attr attr[2];
 
-    memset(&attr, 0, sizeof(attr));
+    for (i=0; i < ARRAY_SIZE(attr); i++)
+        memset(&attr[i], 0, sizeof(attr[0]));
 
     ret = pfm_get_perf_event_encoding("LLC_MISSES", PFM_PLM3,
-        &attr, NULL, NULL);
+        &attr[0], NULL, NULL);
 
     if (ret != PFM_SUCCESS)
         die("couldn't get encoding");
 
-    attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED |
-                       PERF_FORMAT_TOTAL_TIME_RUNNING;
-    attr.disabled = 1;
+    ret = pfm_get_perf_event_encoding("INSTRUCTION_RETIRED", PFM_PLM3,
+        &attr[1], NULL, NULL);
 
-    perf_fd = perf_event_open(&attr, getpid(), -1, -1, 0);
-    if (perf_fd < 0)
-        die("couldn't open fd");
-    ret = ioctl(perf_fd, PERF_EVENT_IOC_ENABLE, 0);
-    if (ret)
-        die("couldn't enable ioctl");
+    if (ret != PFM_SUCCESS)
+        die("couldn't get encoding");
+
+    for (i=0; i < ARRAY_SIZE(attr); i++)
+    {
+        attr[i].read_format = PERF_FORMAT_TOTAL_TIME_ENABLED |
+                       PERF_FORMAT_TOTAL_TIME_RUNNING;
+        attr[i].disabled = 1;
+
+        perf_fds[i] = perf_event_open(&attr[i], getpid(), -1, -1, 0);
+        if (perf_fds[i] < 0)
+                die("couldn't open fd");
+    }
+    for (i=0; i < ARRAY_SIZE(attr); i++)
+    {
+        ret = ioctl(perf_fds[i], PERF_EVENT_IOC_ENABLE, 0);
+        if (ret)
+                die("couldn't enable ioctl");
+    }
 }
 
 void perf_end()
 {
     size_t ret;
+    unsigned int i;
 
-    ret = ioctl(perf_fd, PERF_EVENT_IOC_DISABLE, 0);
-    if (ret)
-        die("couldn't disable ioctl");
-    ret = read(perf_fd, perf_values, sizeof(perf_values));
-    if (ret < sizeof(perf_values))
-        die("couldn't read event\n");
+    for (i=0; i < ARRAY_SIZE(perf_fds); i++)
+    {
+        ret = ioctl(perf_fds[i], PERF_EVENT_IOC_DISABLE, 0);
+        if (ret)
+                die("couldn't disable ioctl");
+        ret = read(perf_fds[i], perf_values[i], sizeof(perf_values[i]));
+        if (ret < sizeof(perf_values[i]))
+                die("couldn't read event\n");
+    }
 }
 
 void time_start()
@@ -151,6 +169,15 @@ void *empty_cache()
     memcpy(buf2, buf, 1024 * 1024 * 100);
     free(buf);
     return buf2;
+}
+
+double perf_scale(int i)
+{
+    if (!perf_values[i][2])
+        perf_values[i][2] = 1;
+
+    return ((double)perf_values[i][0] * perf_values[i][1])/
+        perf_values[i][2];
 }
 
 #define MAX_KEYS (1 << 30)
@@ -219,15 +246,13 @@ int main(int argc, char *argv[])
         if (do_searches)
             search_time = runprof(veb, values, nkeys, NTRIALS);
 
-        if (!perf_values[2])
-            perf_values[2] = 1;
+        double misses = perf_scale(0);
+        double cycles = perf_scale(1);
 
-        u64 cycles = (u64) ((double)perf_values[0] * perf_values[1])/
-            perf_values[2];
-
-        printf("%d %g %g %lld\n", ilog2(nkeys), search_time / 1000000.,
+        printf("%d %g %g %g %g\n", ilog2(nkeys), search_time / 1000000.,
                insert_time / 1000000.,
-               (unsigned long long) cycles);
+               cycles,
+               misses);
 
         fflush(stdout);
         veb_tree_free(veb);
