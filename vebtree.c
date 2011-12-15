@@ -53,8 +53,7 @@ int bfs_to_veb(int bfs_number, int height)
 
     /* mask off common bits */
     num_subtrees = 1 << top_height;
-    mask = (1 << num_subtrees) - 1;
-    bfs_number &= ~(mask << subtree_depth);
+    bfs_number &= (1 << subtree_depth) - 1;
 
     /* replace it with one */
     bfs_number |= 1 << subtree_depth;
